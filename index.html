@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎵</text></svg>">
+    <title>Song Length Checker</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Song Length Checker</h1>
+        <p>Compare song lengths in your local folder with Spotify data</p>
+        
+        <div class="input-section">
+            <div class="auth-section">
+                <h2>Spotify Authentication</h2>
+                <div class="form-group">
+                    <label for="client-id">Client ID:</label>
+                    <input type="text" id="client-id" placeholder="Enter your Spotify Client ID">
+                </div>
+                <div class="form-group">
+                    <label for="client-secret">Client Secret:</label>
+                    <input type="password" id="client-secret" placeholder="Enter your Spotify Client Secret">
+                    <div class="remember-secret-container">
+                        <input type="checkbox" id="remember-secret" />
+                        <label for="remember-secret" class="remember-secret-label">Remember Client Secret</label>
+                    </div>
+                </div>
+                <button id="auth-button">Authenticate</button>
+                <div id="auth-status"></div>
+                
+                <!-- Cache Management Section -->
+                <div class="cache-management">
+                    <h3>Cache Management</h3>
+                    <div class="cache-info">
+                        <span id="cache-status">Cache status: Loading...</span>
+                    </div>
+                    <div class="cache-controls">
+                        <button id="clear-cache-button">Clear Cache</button>
+                        <label class="toggle-container">
+                            <input type="checkbox" id="cache-enabled-toggle" checked>
+                            <span class="toggle-text">Enable Caching</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="file-section">
+                <h2>Select Local Files</h2>
+                <div class="upload-options">
+                    <div class="upload-option">
+                        <input type="radio" id="folder-option" name="upload-type" value="folder" checked>
+                        <label for="folder-option">Upload a folder</label>
+                    </div>
+                    <div class="upload-option">
+                        <input type="radio" id="files-option" name="upload-type" value="files">
+                        <label for="files-option">Upload individual files</label>
+                    </div>
+                </div>
+                
+                <!-- Modern Drag & Drop Area -->
+                <div id="drag-drop-area" class="drag-drop-area empty" data-text="Drag & drop a folder here or click to browse">
+                    <div class="drag-drop-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="48" height="48">
+                            <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z" fill="currentColor"/>
+                        </svg>
+                    </div>
+                    <div class="drag-drop-text"></div>
+                    <div class="spinner-container">
+                        <div class="spinner"></div>
+                    </div>
+                </div>
+                
+                <!-- Legacy file inputs (hidden by default) -->
+                <div id="folder-input-container" class="hidden legacy-input">
+                    <input type="file" id="folder-selector" webkitdirectory directory multiple>
+                    <button id="modern-folder-picker" class="modern-picker-btn">Choose Folder</button>
+                </div>
+                
+                <div id="files-input-container" class="hidden legacy-input">
+                    <input type="file" id="files-selector" multiple accept=".mp3,.m4a,.flac,.wav,.ogg">
+                    <button id="modern-file-picker" class="modern-picker-btn">Choose Files</button>
+                </div>
+                
+                <div id="file-list" class="file-list"></div>
+            </div>
+        </div>
+
+        <div class="actions">
+            <button id="compare-button" disabled>Compare with Spotify</button>
+            <div id="loading" class="hidden">Processing... <span class="spinner"></span></div>
+        </div>
+
+        <div class="results-section">
+            <h2>Results</h2>
+            <div id="results-container">
+                <div id="results-summary"></div>
+                <div class="results-controls">
+                    <div class="issues-filter">
+                        <span class="filter-label">Filter results:</span>
+                        <div class="filter-options">
+                            <label class="filter-option">
+                                <input type="checkbox" id="show-all-issues" />
+                                <span>All Issues</span>
+                            </label>
+                            <label class="filter-option">
+                                <input type="checkbox" id="show-warnings" />
+                                <span>Warnings</span>
+                            </label>
+                            <label class="filter-option">
+                                <input type="checkbox" id="show-errors" />
+                                <span>Errors</span>
+                            </label>
+                            <label class="filter-option">
+                                <input type="checkbox" id="show-not-found" />
+                                <span>Not Found</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <table id="results-table" class="hidden">
+                    <thead>
+                        <tr>
+                            <th>Song</th>
+                            <th>Local Length</th>
+                            <th>Spotify Length</th>
+                            <th>Difference</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="results-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="logger.js"></script>
+    <script src="spotify-api.js"></script>
+    <script src="file-handler.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
