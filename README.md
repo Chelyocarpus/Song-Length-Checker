@@ -1,3 +1,6 @@
+![grafik](https://github.com/user-attachments/assets/998bb8c3-90c8-4b1f-bdb5-477731f143e0)
+
+
 # Song Length Checker
 
 A powerful web application designed to compare the durations of your local audio files with their corresponding tracks on Spotify, helping you identify discrepancies with ease. This tool pairs seamlessly with [Spytify (Spy-Spotify)](https://github.com/jwallet/spy-spotify) by jwallet, making it an excellent companion for verifying the accuracy of your recordings.
