@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎵</text></svg>">
     <title>Song Length Checker</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
     <div class="container">
@@ -89,7 +89,17 @@
 
         <div class="actions">
             <button id="compare-button" disabled>Compare with Spotify</button>
-            <div id="loading" class="hidden">Processing... <span class="spinner"></span></div>
+            <div id="loading" class="hidden">
+                <div class="processing-status">
+                    Processing... <span id="progress-count"></span>
+                    <div class="progress-container">
+                        <div id="progress-bar" class="progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                            <div class="progress-fill"></div>
+                        </div>
+                    </div>
+                </div>
+                <span class="spinner"></span>
+            </div>
         </div>
 
         <div class="results-section">
@@ -135,10 +145,15 @@
         </div>
     </div>
 
-    <script src="config.js"></script>
-    <script src="logger.js"></script>
-    <script src="spotify-api.js"></script>
-    <script src="file-handler.js"></script>
-    <script src="app.js"></script>
+    <!-- Load JavaScript modules in the correct order -->
+    <script src="js/config.js"></script>
+    <script src="js/logger.js"></script>
+    <script src="js/spotify-api.js"></script>
+    <script src="js/file-handler.js"></script>
+    <script src="js/ui-manager.js"></script>
+    <script src="js/file-uploader.js"></script>
+    <script src="js/results-manager.js"></script>
+    <script src="js/cache-manager.js"></script>
+    <script src="js/app.js"></script>
 </body>
 </html>

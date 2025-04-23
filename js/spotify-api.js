@@ -1,5 +1,10 @@
 // Spotify API Handler
 class SpotifyAPI {
+    // Cache storage limits (in bytes)
+    static MAX_CACHE_SIZE = 5 * 1024 * 1024; // 5MB max total cache size
+    static CACHE_CLEANUP_THRESHOLD = 4.5 * 1024 * 1024; // Clean up at 4.5MB
+    static MIN_REMAINING_SPACE = 500 * 1024; // Ensure at least 500KB free
+
     constructor() {
         this.accessToken = null;
         this.tokenExpiry = null;
@@ -8,6 +13,20 @@ class SpotifyAPI {
             tracks: {}
         };
         this.loadCacheFromStorage();
+        
+        // Add debugging properties
+        this._lastAuthAttempt = null;
+        this._authErrors = [];
+        
+        // Simple debounce support for cache saving
+        this._saveTimeout = null;
+        this._saveDelay = 500; // ms to wait before saving cache
+        
+        // Global string normalization cache to reduce redundant operations
+        this._normalizedStringCache = new Map();
+
+        // Check cache size on initialization
+        this._enforceStorageQuota();
     }
 
     // Load cache from localStorage if available
@@ -32,24 +51,80 @@ class SpotifyAPI {
         }
     }
 
-    // Save cache to localStorage
+    // Save cache to localStorage with debouncing and quota management
     saveCacheToStorage() {
-        try {
-            localStorage.setItem('spotifySearchCache', JSON.stringify(this.cache.searches));
-            localStorage.setItem('spotifyTrackCache', JSON.stringify(this.cache.tracks));
-        } catch (error) {
-            console.error('Error saving cache:', error);
-            // If localStorage is full, clear it and try again
-            if (error.name === 'QuotaExceededError') {
-                this.clearCache();
-                try {
-                    localStorage.setItem('spotifySearchCache', JSON.stringify(this.cache.searches));
-                    localStorage.setItem('spotifyTrackCache', JSON.stringify(this.cache.tracks));
-                } catch (e) {
-                    console.error('Still cannot save cache after clearing:', e);
+        if (this._saveTimeout) {
+            clearTimeout(this._saveTimeout);
+        }
+        
+        this._saveTimeout = setTimeout(async () => {
+            try {
+                // Check current size before saving
+                this._enforceStorageQuota();
+                
+                localStorage.setItem('spotifySearchCache', JSON.stringify(this.cache.searches));
+                localStorage.setItem('spotifyTrackCache', JSON.stringify(this.cache.tracks));
+                
+                // Verify size after saving
+                const finalSize = this._calculateCacheSize();
+                logger.info(`Cache saved successfully. Total size: ${(finalSize / 1024).toFixed(2)}KB`);
+                
+            } catch (error) {
+                logger.error('Error saving cache:', error);
+                
+                // Handle QuotaExceededError with exponential reduction
+                if (error.name === 'QuotaExceededError') {
+                    logger.warn('Storage quota exceeded, attempting progressive cleanup...');
+                    
+                    // Try increasingly aggressive pruning
+                    const pruneRatios = [0.3, 0.5, 0.7, 0.9];
+                    
+                    for (const ratio of pruneRatios) {
+                        this._pruneCache(ratio);
+                        try {
+                            localStorage.setItem('spotifySearchCache', JSON.stringify(this.cache.searches));
+                            localStorage.setItem('spotifyTrackCache', JSON.stringify(this.cache.tracks));
+                            logger.info(`Cache saved after ${(ratio * 100).toFixed(0)}% reduction`);
+                            return;
+                        } catch (e) {
+                            logger.warn(`Still cannot save after ${(ratio * 100).toFixed(0)}% reduction, trying more aggressive cleanup...`);
+                            continue;
+                        }
+                    }
+                    
+                    // If all ratios failed, clear the cache as last resort
+                    logger.error('Could not save cache even after aggressive pruning, clearing cache');
+                    this.clearCache();
                 }
             }
-        }
+        }, this._saveDelay);
+    }
+    
+    // Prune old cache entries to free up space
+    _pruneCache(ratio = 0.3) {
+        logger.info(`Pruning cache to free up space (ratio: ${(ratio * 100).toFixed(0)}%)`);
+        
+        // Get entries as arrays for faster sorting
+        const searchEntries = Object.entries(this.cache.searches);
+        const trackEntries = Object.entries(this.cache.tracks);
+        
+        // Sort by timestamp (oldest first)
+        searchEntries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+        trackEntries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+        
+        // Calculate entries to remove based on ratio
+        const searchesToRemove = Math.floor(searchEntries.length * ratio);
+        const tracksToRemove = Math.floor(trackEntries.length * ratio);
+        
+        logger.info(`Pruning ${searchesToRemove} searches and ${tracksToRemove} tracks`);
+        
+        // Create new objects with remaining items
+        this.cache.searches = Object.fromEntries(searchEntries.slice(searchesToRemove));
+        this.cache.tracks = Object.fromEntries(trackEntries.slice(tracksToRemove));
+        
+        // Log cache size after pruning
+        const sizeAfterPrune = this._calculateCacheSize();
+        logger.info(`Cache size after pruning: ${(sizeAfterPrune / 1024).toFixed(2)}KB`);
     }
 
     // Clear the cache
@@ -57,7 +132,39 @@ class SpotifyAPI {
         this.cache = { searches: {}, tracks: {} };
         localStorage.removeItem('spotifySearchCache');
         localStorage.removeItem('spotifyTrackCache');
-        console.log('Cache cleared');
+        logger.info('Cache cleared');
+    }
+
+    // Clean old cache entries to prevent storage bloat
+    cleanupCache() {
+        if (!config.cache.enabled) return;
+        
+        const now = Date.now();
+        let searchesRemoved = 0;
+        let tracksRemoved = 0;
+        
+        // Clean up search cache
+        Object.keys(this.cache.searches).forEach(key => {
+            if (now - this.cache.searches[key].timestamp > config.cache.maxAge) {
+                delete this.cache.searches[key];
+                searchesRemoved++;
+            }
+        });
+        
+        // Clean up track cache
+        Object.keys(this.cache.tracks).forEach(key => {
+            if (now - this.cache.tracks[key].timestamp > config.cache.maxAge) {
+                delete this.cache.tracks[key];
+                tracksRemoved++;
+            }
+        });
+        
+        if (searchesRemoved > 0 || tracksRemoved > 0) {
+            logger.info(`Cache cleanup: removed ${searchesRemoved} searches and ${tracksRemoved} tracks`);
+            this.saveCacheToStorage();
+        }
+        
+        return { searchesRemoved, tracksRemoved };
     }
 
     // Generate a cache key for searches
@@ -71,11 +178,72 @@ class SpotifyAPI {
                (Date.now() - timestamp) < config.cache.maxAge;
     }
 
+    // Utility method to fetch with retry for rate limiting
+    async fetchWithRetry(url, options, retryCount = 0) {
+        try {
+            const response = await fetch(url, options);
+            
+            // If we get a rate limit response (429)
+            if (response.status === 429) {
+                // Check for Retry-After header (in seconds)
+                const retryAfter = response.headers.get('Retry-After');
+                let delayMs = config.retry.initialDelayMs;
+                
+                if (retryAfter) {
+                    // Use the Retry-After value from Spotify
+                    delayMs = parseInt(retryAfter) * 1000;
+                    logger.info(`Rate limited by Spotify. Retry-After: ${retryAfter} seconds`);
+                } else {
+                    // Use exponential backoff if no Retry-After header
+                    delayMs = Math.min(
+                        config.retry.initialDelayMs * Math.pow(2, retryCount),
+                        config.retry.maxDelayMs
+                    );
+                    logger.info(`Rate limited by Spotify. Using exponential backoff: ${delayMs}ms`);
+                }
+                
+                // Add jitter to prevent synchronized retries
+                const jitter = Math.floor(Math.random() * config.retry.jitterMs);
+                delayMs += jitter;
+                
+                // Only retry if we haven't exceeded max retries
+                if (retryCount < config.retry.maxRetries) {
+                    logger.info(`Retrying after ${delayMs}ms (attempt ${retryCount + 1}/${config.retry.maxRetries})`);
+                    
+                    // Wait for the specified delay
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                    
+                    // Retry the request with incremented retry count
+                    return this.fetchWithRetry(url, options, retryCount + 1);
+                } else {
+                    logger.error(`Maximum retry attempts (${config.retry.maxRetries}) exceeded.`);
+                    return response; // Return the rate limited response after max retries
+                }
+            }
+            
+            return response;
+        } catch (error) {
+            // For network errors, also implement retry logic
+            if (error.name === 'TypeError' && retryCount < config.retry.maxRetries) {
+                const delayMs = Math.min(
+                    config.retry.initialDelayMs * Math.pow(2, retryCount),
+                    config.retry.maxDelayMs
+                ) + Math.floor(Math.random() * config.retry.jitterMs);
+                
+                logger.warn(`Network error: ${error.message}. Retrying after ${delayMs}ms...`);
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+                return this.fetchWithRetry(url, options, retryCount + 1);
+            }
+            
+            throw error; // Re-throw other errors or if max retries exceeded
+        }
+    }
+
     // Authenticate with Spotify API using client credentials flow
     async authenticate(clientId, clientSecret) {
         try {
             const authString = btoa(`${clientId}:${clientSecret}`);
-            const response = await fetch(config.authEndpoint, {
+            const response = await this.fetchWithRetry(config.authEndpoint, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Basic ${authString}`,
@@ -93,7 +261,7 @@ class SpotifyAPI {
             this.tokenExpiry = Date.now() + (data.expires_in * 1000);
             return true;
         } catch (error) {
-            console.error('Authentication error:', error);
+            logger.error('Authentication error:', error);
             return false;
         }
     }
@@ -114,17 +282,29 @@ class SpotifyAPI {
             
             return Object.keys(searchCache).length > 0 || Object.keys(trackCache).length > 0;
         } catch (error) {
-            console.error('Error checking cached data:', error);
+            logger.error('Error checking cached data:', error);
             return false;
         }
     }
 
-    // Search for tracks on Spotify with extended options
+    // Search for tracks on Spotify with extended options (simplified version)
     async searchTrack(track, artist = '', album = '', useCacheOnly = false) {
-        // Normalize input strings to handle Unicode characters properly
-        const normalizedTrack = track ? track.normalize('NFC') : '';
-        const normalizedArtist = artist ? artist.normalize('NFC') : '';
-        const normalizedAlbum = album ? album.normalize('NFC') : '';
+        // Normalize input strings - filter out invalid characters
+        const getNormalizedString = (str) => {
+            if (!str) return '';
+            const cacheKey = `norm:${str}`;
+            if (this._normalizedStringCache.has(cacheKey)) {
+                return this._normalizedStringCache.get(cacheKey);
+            }
+            // Remove replacement characters and normalize
+            const normalized = str.normalize('NFC').replace(/�/g, '');
+            this._normalizedStringCache.set(cacheKey, normalized);
+            return normalized;
+        };
+        
+        let normalizedTrack = getNormalizedString(track);
+        let normalizedArtist = getNormalizedString(artist);
+        let normalizedAlbum = getNormalizedString(album);
         
         // Generate cache key
         const cacheKey = this.generateSearchKey(normalizedTrack, normalizedArtist, normalizedAlbum);
@@ -149,33 +329,35 @@ class SpotifyAPI {
 
         try {
             // Detect CJK characters in any of the inputs
-            const hasCJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]/.test(
+            const hasCJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uff66-\uff9f]/.test(
                 normalizedTrack + normalizedArtist + normalizedAlbum
             );
             
-            // Debug CJK content
-            if (hasCJK) {
-                logger.debug(`Input contains CJK characters:`, {
+            // Check for invalid characters - replace with empty string rather than skipping
+            if (normalizedAlbum.includes('�') || normalizedTrack.includes('�') || normalizedArtist.includes('�')) {
+                logger.warn(`Query contains replacement characters, sanitizing:`, {
                     track: normalizedTrack,
                     artist: normalizedArtist,
                     album: normalizedAlbum
                 });
+                
+                // Sanitize strings
+                const sanitizedTrack = normalizedTrack.replace(/�/g, '');
+                const sanitizedArtist = normalizedArtist.replace(/�/g, '');
+                const sanitizedAlbum = normalizedAlbum.replace(/�/g, '');
+                
+                // Update normalized versions
+                if (normalizedTrack !== sanitizedTrack) normalizedTrack = sanitizedTrack;
+                if (normalizedArtist !== sanitizedArtist) normalizedArtist = sanitizedArtist;
+                if (normalizedAlbum !== sanitizedAlbum) normalizedAlbum = sanitizedAlbum;
             }
+
+            // Execute search strategies one by one until we get enough results
+            let allTracks = [];
             
-            // Verify album isn't corrupted (check for replacement character �)
-            const hasInvalidChars = normalizedAlbum.includes('�') || 
-                                    normalizedTrack.includes('�') || 
-                                    normalizedArtist.includes('�');
-            
-            if (hasInvalidChars) {
-                logger.warn(`Query contains replacement characters, which indicates encoding issues.`, 
-                    { track: normalizedTrack, artist: normalizedArtist, album: normalizedAlbum });
-            }
-            
-            // Start with basic search query
+            // 1. First try the most specific search with all parameters
             let queryParts = [];
             
-            // Add each part to the query with proper handling for CJK characters
             if (normalizedTrack) {
                 queryParts.push(`track:${normalizedTrack}`);
             }
@@ -184,32 +366,16 @@ class SpotifyAPI {
                 queryParts.push(`artist:${normalizedArtist}`);
             }
             
-            // For albums, specially handle CJK content:
-            // - For very short album names (1-2 characters), add as album qualifier
-            // - For longer CJK albums, add as general search term
             if (normalizedAlbum && !normalizedAlbum.includes('�')) {
                 const cleanedAlbum = normalizedAlbum.replace(/[.,;:!]+$/, '').trim();
-                
-                if (hasCJK && /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uff66-\uff9f]/.test(cleanedAlbum)) {
-                    // For Chinese (and other CJK) albums, try using album qualifier
-                    queryParts.push(`album:${cleanedAlbum}`);
-                    logger.debug(`Album contains CJK characters, using album qualifier: album:${cleanedAlbum}`);
-                } else {
-                    // For non-CJK albums, use the standard album: prefix
-                    queryParts.push(`album:${cleanedAlbum}`);
-                }
-            } else if (normalizedAlbum && normalizedAlbum.includes('�')) {
-                logger.warn(`Skipping album in query due to encoding issues: ${normalizedAlbum}`);
+                queryParts.push(`album:${cleanedAlbum}`);
             }
             
-            // Join all parts with spaces
-            const query = queryParts.join(' ');
+            const primaryQuery = queryParts.join(' ');
+            logger.info(`Searching Spotify with primary query: ${primaryQuery}`);
             
-            logger.info(`Searching Spotify with query: ${query}`);
-            
-            // First, try the specific query with all available information
-            let response = await fetch(
-                `${config.apiBaseUrl}/search?q=${encodeURIComponent(query)}&type=track&limit=5`,
+            let response = await this.fetchWithRetry(
+                `${config.apiBaseUrl}/search?q=${encodeURIComponent(primaryQuery)}&type=track&limit=5`,
                 {
                     headers: {
                         'Authorization': `Bearer ${this.accessToken}`
@@ -217,25 +383,20 @@ class SpotifyAPI {
                 }
             );
 
-            if (!response.ok) {
-                throw new Error(`Search failed: ${response.status} ${response.statusText}`);
+            if (response.ok) {
+                const data = await response.json();
+                allTracks = [...data.tracks.items];
             }
-
-            let data = await response.json();
-            let tracks = data.tracks.items;
             
-            // If no results or very few results with CJK characters, try a simplified query
-            if (hasCJK && tracks.length < 2) {
-                logger.debug(`Limited results with CJK characters. Trying simplified search.`);
-                
-                // For CJK content, simplify the query to just track and artist without special prefixes
+            // 2. If we have CJK content and few results, try simplified query
+            if (hasCJK && allTracks.length < 2) {
                 const simplifiedQuery = [normalizedTrack, normalizedArtist, normalizedAlbum]
-                    .filter(part => part)
+                    .filter(part => part && !part.includes('�'))
                     .join(' ');
                 
-                logger.debug(`Simplified CJK search query: ${simplifiedQuery}`);
+                logger.debug(`Limited results with CJK characters. Trying simplified search: ${simplifiedQuery}`);
                 
-                response = await fetch(
+                response = await this.fetchWithRetry(
                     `${config.apiBaseUrl}/search?q=${encodeURIComponent(simplifiedQuery)}&type=track&limit=10`,
                     {
                         headers: {
@@ -246,41 +407,33 @@ class SpotifyAPI {
                 
                 if (response.ok) {
                     const simplifiedData = await response.json();
-                    // Combine results, avoiding duplicates
-                    const existingIds = new Set(tracks.map(t => t.id));
+                    // Add non-duplicate tracks
+                    const existingIds = new Set(allTracks.map(t => t.id));
                     const newTracks = simplifiedData.tracks.items.filter(t => !existingIds.has(t.id));
-                    
-                    logger.debug(`Simplified search found ${newTracks.length} additional tracks`);
-                    tracks = [...tracks, ...newTracks];
+                    allTracks = [...allTracks, ...newTracks];
                 }
             }
             
-            // If no results and we have a track name with numbers, try without numbers
-            if (tracks.length === 0 && /\d/.test(normalizedTrack)) {
+            // 3. If no results and we have a track name with numbers, try without numbers
+            if (allTracks.length === 0 && /\d/.test(normalizedTrack)) {
                 const strippedTrack = normalizedTrack.replace(/\s+\d+\s*$/, '').trim();
                 
                 if (strippedTrack !== normalizedTrack) {
-                    logger.debug(`No results found. Trying search without trailing numbers: ${strippedTrack}`);
-                    
-                    // Rebuild query with stripped track name
-                    const strippedQueryParts = [];
+                    let strippedQueryParts = [];
                     strippedQueryParts.push(`track:${strippedTrack}`);
                     
                     if (normalizedArtist) {
                         strippedQueryParts.push(`artist:${normalizedArtist}`);
                     }
                     
-                    if (normalizedAlbum) {
-                        if (hasCJK && /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uff66-\uff9f]/.test(normalizedAlbum)) {
-                            strippedQueryParts.push(normalizedAlbum);
-                        } else {
-                            strippedQueryParts.push(`album:${normalizedAlbum}`);
-                        }
+                    if (normalizedAlbum && !normalizedAlbum.includes('�')) {
+                        strippedQueryParts.push(`album:${normalizedAlbum}`);
                     }
                     
                     const strippedQuery = strippedQueryParts.join(' ');
+                    logger.debug(`No results found. Trying without trailing numbers: ${strippedQuery}`);
                     
-                    response = await fetch(
+                    response = await this.fetchWithRetry(
                         `${config.apiBaseUrl}/search?q=${encodeURIComponent(strippedQuery)}&type=track&limit=5`,
                         {
                             headers: {
@@ -290,18 +443,18 @@ class SpotifyAPI {
                     );
                     
                     if (response.ok) {
-                        data = await response.json();
-                        tracks = [...tracks, ...data.tracks.items];
+                        const data = await response.json();
+                        allTracks = [...allTracks, ...data.tracks.items];
                     }
                 }
             }
             
-            // If still no results, try a more relaxed search (title only)
-            if (tracks.length === 0 && normalizedTrack) {
-                logger.debug(`No results found. Trying broader search with just track name: ${normalizedTrack}`);
+            // 4. If still no results, try a more relaxed search (title only)
+            if (allTracks.length === 0 && normalizedTrack) {
                 const relaxedQuery = `track:${normalizedTrack}`;
+                logger.debug(`No results found. Trying broader search: ${relaxedQuery}`);
                 
-                response = await fetch(
+                response = await this.fetchWithRetry(
                     `${config.apiBaseUrl}/search?q=${encodeURIComponent(relaxedQuery)}&type=track&limit=10`,
                     {
                         headers: {
@@ -311,98 +464,37 @@ class SpotifyAPI {
                 );
                 
                 if (response.ok) {
-                    data = await response.json();
-                    tracks = [...tracks, ...data.tracks.items];
+                    const data = await response.json();
+                    allTracks = [...allTracks, ...data.tracks.items];
                 }
             }
             
             // Save to cache
             this.cache.searches[cacheKey] = {
-                data: tracks,
+                data: allTracks,
                 timestamp: Date.now()
             };
             this.saveCacheToStorage();
             
-            return tracks;
+            return allTracks;
         } catch (error) {
             logger.error('Search error:', error);
             return [];
         }
     }
 
-    // Get track details by Spotify ID
-    async getTrack(trackId) {
-        if (!this.isAuthenticated()) {
-            throw new Error('Not authenticated. Please authenticate first.');
-        }
-
+    // Private helper method to fetch track by ID (simplified, no batching)
+    async _fetchTrackById(trackId, useCacheOnly = false) {
         // Check cache first
         const cachedTrack = this.cache.tracks[trackId];
         if (cachedTrack && this.isCacheValid(cachedTrack.timestamp)) {
-            console.log(`Using cached track data for ID: ${trackId}`);
-            return cachedTrack.data;
-        }
-
-        try {
-            const response = await fetch(
-                `${config.apiBaseUrl}/tracks/${trackId}`,
-                {
-                    headers: {
-                        'Authorization': `Bearer ${this.accessToken}`
-                    }
-                }
-            );
-
-            if (!response.ok) {
-                throw new Error(`Get track failed: ${response.status} ${response.statusText}`);
-            }
-
-            const trackData = await response.json();
-            
-            // Save to cache
-            this.cache.tracks[trackId] = {
-                data: trackData,
-                timestamp: Date.now()
-            };
-            this.saveCacheToStorage();
-            
-            return trackData;
-        } catch (error) {
-            console.error('Get track error:', error);
-            return null;
-        }
-    }
-
-    // Extract track ID from Spotify URL
-    extractTrackIdFromUrl(url) {
-        try {
-            // Handle URLs like: https://open.spotify.com/track/7cjUFCh2aWX9E9bXig3nV7?si=39440e6bd7944b80
-            const trackIdMatch = url.match(/\/track\/([a-zA-Z0-9]+)/);
-            return trackIdMatch ? trackIdMatch[1] : null;
-        } catch (error) {
-            console.error('Error extracting track ID from URL:', error);
-            return null;
-        }
-    }
-
-    // Get track details by Spotify URL
-    async getTrackFromUrl(url, useCacheOnly = false) {
-        const trackId = this.extractTrackIdFromUrl(url);
-        
-        if (!trackId) {
-            throw new Error('Invalid Spotify track URL. Expected format: https://open.spotify.com/track/TRACKID');
-        }
-        
-        // Check cache first
-        const cachedTrack = this.cache.tracks[trackId];
-        if (cachedTrack && this.isCacheValid(cachedTrack.timestamp)) {
-            console.log(`Using cached track data for ID: ${trackId} (from URL)`);
+            logger.info(`Using cached track data for ID: ${trackId}`);
             return cachedTrack.data;
         }
         
         // If using cache only and no valid cache, return null
         if (useCacheOnly) {
-            console.log(`No cached data for track ID: ${trackId} (cache-only mode)`);
+            logger.info(`No cached data for track ID: ${trackId} (cache-only mode)`);
             return null;
         }
         
@@ -411,7 +503,7 @@ class SpotifyAPI {
         }
         
         try {
-            const response = await fetch(
+            const response = await this.fetchWithRetry(
                 `${config.apiBaseUrl}/tracks/${trackId}`,
                 {
                     headers: {
@@ -438,6 +530,44 @@ class SpotifyAPI {
             
             return trackData;
         } catch (error) {
+            logger.error('Get track error:', error);
+            throw error;
+        }
+    }
+
+    // Get track details by Spotify ID
+    async getTrack(trackId) {
+        try {
+            return await this._fetchTrackById(trackId);
+        } catch (error) {
+            logger.error('Get track error:', error);
+            return null;
+        }
+    }
+
+    // Extract track ID from Spotify URL
+    extractTrackIdFromUrl(url) {
+        try {
+            // Handle URLs like: https://open.spotify.com/track/7cjUFCh2aWX9E9bXig3nV7?si=39440e6bd7944b80
+            const trackIdMatch = url.match(/\/track\/([a-zA-Z0-9]+)/);
+            return trackIdMatch ? trackIdMatch[1] : null;
+        } catch (error) {
+            logger.error('Error extracting track ID from URL:', error);
+            return null;
+        }
+    }
+
+    // Get track details by Spotify URL
+    async getTrackFromUrl(url, useCacheOnly = false) {
+        const trackId = this.extractTrackIdFromUrl(url);
+        
+        if (!trackId) {
+            throw new Error('Invalid Spotify track URL. Expected format: https://open.spotify.com/track/TRACKID');
+        }
+        
+        try {
+            return await this._fetchTrackById(trackId, useCacheOnly);
+        } catch (error) {
             console.error('Get track from URL error:', error);
             throw error;
         }
@@ -452,21 +582,25 @@ class SpotifyAPI {
             return null;
         }
 
-        // Normalize string by removing common suffixes/prefixes and lowercasing
-        const normalizeString = (str) => {
-            // Handle possible undefined or null values
-            if (!str) return '';
-            
-            // Normalize unicode characters to ensure proper comparison of non-Latin scripts
-            const normalized = str.normalize('NFC').toLowerCase()
-                .replace(/\(.*?\)/g, '') // Remove content in parentheses
-                .replace(/\[.*?\]/g, '') // Remove content in brackets
-                .replace(/feat\.?.*$/i, '') // Remove "feat." and anything after
-                .replace(/\s+\d+\\s*$/, '') // Remove trailing numbers (like "Song 2")
-                .trim();
+        // Create memoized version of normalizeString to avoid redundant calculations
+        const normalizeStringMemo = (() => {
+            const cache = new Map();
+            return (str) => {
+                if (!str) return '';
+                if (cache.has(str)) return cache.get(str);
                 
-            return normalized;
-        };
+                // Normalize unicode characters to ensure proper comparison of non-Latin scripts
+                const normalized = str.normalize('NFC').toLowerCase()
+                    .replace(/\(.*?\)/g, '') // Remove content in parentheses
+                    .replace(/\[.*?\]/g, '') // Remove content in brackets
+                    .replace(/feat\.?.*$/i, '') // Remove "feat." and anything after
+                    .replace(/\s+\d+\\s*$/, '') // Remove trailing numbers (like "Song 2")
+                    .trim();
+                    
+                cache.set(str, normalized);
+                return normalized;
+            };
+        })();
 
         // Normalize for featured artist comparison
         const normalizeFeaturing = (str) => {
@@ -489,82 +623,103 @@ class SpotifyAPI {
             };
         };
 
-        // Advanced string similarity function with improved CJK character handling
-        const similarity = (a, b) => {
-            // Handle empty strings
-            if (!a || !b) return 0;
+        // Create memoized version of similarity function
+        const similarityMemo = (() => {
+            const cache = new Map();
             
-            // Normalize both strings for proper unicode comparison
-            const strA = normalizeString(a);
-            const strB = normalizeString(b);
-            
-            // Exact match after normalization
-            if (strA === strB) return 1.0;
-            
-            // One string contains the other completely
-            if (strA.includes(strB) || strB.includes(strA)) {
-                // If they're very different in length, reduce score slightly
-                const lenRatio = Math.min(strA.length, strB.length) / Math.max(strA.length, strB.length);
-                return 0.9 * lenRatio;
-            }
-            
-            // Special handling for CJK characters - character-by-character comparison
-            // for languages like Chinese where spaces may not be used between words
-            const hasCJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uff66-\uff9f]/.test(strA) ||
-                           /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uff66-\uff9f]/.test(strB);
+            return (a, b) => {
+                if (!a || !b) return 0;
                 
-            if (hasCJK) {
-                // Count matching characters (order doesn't matter as much for CJK)
-                const charsA = [...strA];
-                const charsB = [...strB];
-                let matchCount = 0;
+                // Create cache key (ensure order doesn't matter)
+                const cacheKey = a < b ? `${a}:${b}` : `${b}:${a}`;
                 
-                // Use a copy of charsB to mark characters as used
-                const unusedCharsB = [...charsB];
-                
-                for (const char of charsA) {
-                    const index = unusedCharsB.indexOf(char);
-                    if (index !== -1) {
-                        matchCount++;
-                        // Remove the matched character to avoid double counting
-                        unusedCharsB.splice(index, 1);
-                    }
+                if (cache.has(cacheKey)) {
+                    return cache.get(cacheKey);
                 }
                 
-                // Calculate character match ratio
-                const maxPossibleMatches = Math.max(charsA.length, charsB.length);
-                return matchCount / maxPossibleMatches;
-            }
-            
-            // For non-CJK languages, proceed with word-based comparison
-            // Compare individual words for partial matches
-            const wordsA = strA.split(/\s+/);
-            const wordsB = strB.split(/\s+/);
-            
-            let wordMatches = 0;
-            for (const wordA of wordsA) {
-                if (wordA.length < 2) continue; // Skip very short words
-                for (const wordB of wordsB) {
-                    if (wordB.length < 2) continue;
-                    if (wordA.includes(wordB) || wordB.includes(wordA)) {
-                        wordMatches++;
-                        break;
+                // Advanced string similarity function with improved CJK character handling
+                const similarity = (a, b) => {
+                    // Handle empty strings
+                    if (!a || !b) return 0;
+                    
+                    // Normalize both strings for proper unicode comparison
+                    const strA = normalizeStringMemo(a);
+                    const strB = normalizeStringMemo(b);
+                    
+                    // Exact match after normalization
+                    if (strA === strB) return 1.0;
+                    
+                    // One string contains the other completely
+                    if (strA.includes(strB) || strB.includes(strA)) {
+                        // If they're very different in length, reduce score slightly
+                        const lenRatio = Math.min(strA.length, strB.length) / Math.max(strA.length, strB.length);
+                        return 0.9 * lenRatio;
                     }
-                }
-            }
-            
-            const wordSimilarity = wordMatches / Math.max(wordsA.length, wordsB.length);
-            
-            // Count matching characters for edit distance
-            let matches = 0;
-            for (let i = 0; i < Math.min(strA.length, strB.length); i++) {
-                if (strA[i] === strB[i]) matches++;
-            }
-            const charSimilarity = matches / Math.max(strA.length, strB.length);
-            
-            // Combine word and character similarity
-            return (wordSimilarity * 0.7) + (charSimilarity * 0.3);
-        };
+                    
+                    // Special handling for CJK characters - character-by-character comparison
+                    // for languages like Chinese where spaces may not be used between words
+                    const hasCJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uff66-\uff9f]/.test(strA) ||
+                                   /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uff66-\uff9f]/.test(strB);
+                        
+                    if (hasCJK) {
+                        // Count matching characters (order doesn't matter as much for CJK)
+                        const charsA = [...strA];
+                        const charsB = [...strB];
+                        let matchCount = 0;
+                        
+                        // Use a copy of charsB to mark characters as used
+                        const unusedCharsB = [...charsB];
+                        
+                        for (const char of charsA) {
+                            const index = unusedCharsB.indexOf(char);
+                            if (index !== -1) {
+                                matchCount++;
+                                // Remove the matched character to avoid double counting
+                                unusedCharsB.splice(index, 1);
+                            }
+                        }
+                        
+                        // Calculate character match ratio
+                        const maxPossibleMatches = Math.max(charsA.length, charsB.length);
+                        return matchCount / maxPossibleMatches;
+                    }
+                    
+                    // For non-CJK languages, proceed with word-based comparison
+                    // Compare individual words for partial matches
+                    const wordsA = strA.split(/\s+/);
+                    const wordsB = strB.split(/\s+/);
+                    
+                    let wordMatches = 0;
+                    for (const wordA of wordsA) {
+                        if (wordA.length < 2) continue; // Skip very short words
+                        for (const wordB of wordsB) {
+                            if (wordB.length < 2) continue;
+                            if (wordA.includes(wordB) || wordB.includes(wordA)) {
+                                wordMatches++;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    const wordSimilarity = wordMatches / Math.max(wordsA.length, wordsB.length);
+                    
+                    // Count matching characters for edit distance
+                    let matches = 0;
+                    for (let i = 0; i < Math.min(strA.length, strB.length); i++) {
+                        if (strA[i] === strB[i]) matches++;
+                    }
+                    const charSimilarity = matches / Math.max(strA.length, strB.length);
+                    
+                    // Combine word and character similarity
+                    return (wordSimilarity * 0.7) + (charSimilarity * 0.3);
+                };
+
+                // Cache the result before returning
+                const result = similarity(a, b);
+                cache.set(cacheKey, result);
+                return result;
+            };
+        })();
 
         // Compare titles with featured artists specifically
         const compareWithFeaturing = (localTitle, spotifyTitle) => {
@@ -574,8 +729,8 @@ class SpotifyAPI {
             // If both have featuring information
             if (localFeat.hasFeat && spotifyFeat.hasFeat) {
                 // Compare main titles and featured artists separately
-                const titleSim = similarity(localFeat.mainTitle, spotifyFeat.mainTitle);
-                const featSim = similarity(localFeat.featArtist, spotifyFeat.featArtist);
+                const titleSim = similarityMemo(localFeat.mainTitle, spotifyFeat.mainTitle);
+                const featSim = similarityMemo(localFeat.featArtist, spotifyFeat.featArtist);
                 // Weighted combination (main title is more important)
                 return (titleSim * 0.8) + (featSim * 0.2);
             }
@@ -586,16 +741,16 @@ class SpotifyAPI {
             }
             
             // Default to regular similarity
-            return similarity(localTitle, spotifyTitle);
+            return similarityMemo(localTitle, spotifyTitle);
         };
 
         let bestMatch = null;
         let highestScore = -1; // Start with -1 instead of threshold to always get the best match
 
         // Original search name and normalized version
-        const normalizedTrackName = normalizeString(trackName);
+        const normalizedTrackName = normalizeStringMemo(trackName);
         // Normalize the album name if provided
-        const normalizedAlbumName = albumName ? normalizeString(albumName) : '';
+        const normalizedAlbumName = albumName ? normalizeStringMemo(albumName) : '';
 
         // Check for numeric suffix in track name (e.g., "On & On 2")
         const hasNumericSuffix = /\s+\d+\s*$/.test(trackName);
@@ -616,7 +771,7 @@ class SpotifyAPI {
             // Try different name variations
             const nameVariations = [
                 { name: track.name, weight: 1.0 },
-                { name: normalizeString(track.name), weight: 0.9 }
+                { name: normalizeStringMemo(track.name), weight: 0.9 }
             ];
             
             // Track name variations to try
@@ -647,7 +802,7 @@ class SpotifyAPI {
                 // Standard title comparison for tracks without featuring
                 for (const trackVar of trackNameVariations) {
                     for (const spotifyVar of nameVariations) {
-                        const rawScore = similarity(spotifyVar.name, trackVar.name);
+                        const rawScore = similarityMemo(spotifyVar.name, trackVar.name);
                         const weightedScore = rawScore * trackVar.weight * spotifyVar.weight;
                         bestNameScore = Math.max(bestNameScore, weightedScore);
                     }
@@ -672,7 +827,7 @@ class SpotifyAPI {
                 if (exactArtistMatch) {
                     artistScore = 1.0;
                 } else {
-                    artistScore = similarity(trackArtists, artistName);
+                    artistScore = similarityMemo(trackArtists, artistName);
                 }
                 
                 // If track features an artist, check if this matches our expected artist
@@ -691,7 +846,7 @@ class SpotifyAPI {
             // Consider album name as a bonus factor with improved CJK handling
             let albumBonus = 0;
             if (track.album && track.album.name && normalizedAlbumName) {
-                const normalizedSpotifyAlbum = normalizeString(track.album.name);
+                const normalizedSpotifyAlbum = normalizeStringMemo(track.album.name);
                 
                 // Log album comparison details for debugging
                 logger.trace(`Album comparison: "${normalizedAlbumName}" vs "${normalizedSpotifyAlbum}"`);
@@ -782,7 +937,7 @@ class SpotifyAPI {
                         }
                     } else {
                         // For longer CJK album names, use similarity function
-                        const albumSimilarity = similarity(normalizedSpotifyAlbum, normalizedAlbumName);
+                        const albumSimilarity = similarityMemo(normalizedSpotifyAlbum, normalizedAlbumName);
                         if (albumSimilarity > 0.5) {
                             albumBonus = 0.1 * albumSimilarity;
                             logger.debug(`Album similarity for CJK: ${albumSimilarity.toFixed(2)}, bonus: +${albumBonus.toFixed(2)}`);
@@ -858,7 +1013,42 @@ class SpotifyAPI {
 
         return bestMatch;
     }
+
+    // Calculate the current size of cache data in localStorage
+    _calculateCacheSize() {
+        try {
+            // Get the size of both caches
+            const searchCacheSize = new Blob([localStorage.getItem('spotifySearchCache') || '']).size;
+            const trackCacheSize = new Blob([localStorage.getItem('spotifyTrackCache') || '']).size;
+            return searchCacheSize + trackCacheSize;
+        } catch (error) {
+            logger.error('Error calculating cache size:', error);
+            return 0;
+        }
+    }
+
+    // Check and enforce storage quota limits
+    _enforceStorageQuota() {
+        const currentSize = this._calculateCacheSize();
+
+        // Log current cache size for monitoring
+        logger.info(`Current cache size: ${(currentSize / 1024).toFixed(2)}KB`);
+
+        // If we're approaching the limit, trigger cleanup
+        if (currentSize >= SpotifyAPI.CACHE_CLEANUP_THRESHOLD) {
+            logger.info('Cache size exceeds cleanup threshold, initiating cleanup...');
+            this._pruneCache();
+            
+            // After pruning, check if we need more aggressive cleanup
+            const sizeAfterPrune = this._calculateCacheSize();
+            if (sizeAfterPrune > SpotifyAPI.MAX_CACHE_SIZE - SpotifyAPI.MIN_REMAINING_SPACE) {
+                logger.warn('Cache still too large after pruning, performing emergency cleanup...');
+                // Remove more aggressively - 50% of entries
+                this._pruneCache(0.5);
+            }
+        }
+    }
 }
 
 // Create a singleton instance
-const spotifyApi = new SpotifyAPI()
+const spotifyApi = new SpotifyAPI();

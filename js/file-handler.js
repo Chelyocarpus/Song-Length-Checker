@@ -3,6 +3,11 @@ class FileHandler {
     constructor() {
         this.files = [];
         this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        this.uiManager = null;
+    }
+
+    setUIManager(uiManager) {
+        this.uiManager = uiManager;
     }
 
     // Process selected files from the input element
@@ -111,6 +116,12 @@ class FileHandler {
     // Process all files to get their durations
     async processFilesWithDuration() {
         const fileData = [];
+        let processedCount = 0;
+        
+        // Initialize progress tracking at the start of actual processing
+        if (this.uiManager) {
+            this.uiManager.initializeProgress(this.files.length);
+        }
         
         for (const file of this.files) {
             try {
@@ -169,6 +180,12 @@ class FileHandler {
                     formattedDuration: this.formatDuration(duration)
                 });
                 
+                // Update progress
+                processedCount++;
+                if (this.uiManager) {
+                    this.uiManager.updateProgress(processedCount);
+                }
+                
                 logger.info(`Processed ${file.name}:`, {
                     title: trackInfo.title,
                     artist: trackInfo.artist,
@@ -177,6 +194,11 @@ class FileHandler {
                 });
             } catch (error) {
                 logger.error(`Error processing file ${file.name}:`, error);
+                // Still increment progress even if there's an error
+                processedCount++;
+                if (this.uiManager) {
+                    this.uiManager.updateProgress(processedCount);
+                }
             }
         }
         
@@ -222,22 +244,45 @@ class FileHandler {
                     // Frame ID (4 characters)
                     const frameId = String.fromCharCode(bytes[offset], bytes[offset+1], bytes[offset+2], bytes[offset+3]);
                     
-                    // Frame size (4 bytes) - handle based on version
-                    let frameSize;
-                    if (majorVersion < 4) {
-                        // ID3v2.2 and ID3v2.3 use big-endian
-                        frameSize = (bytes[offset+4] << 24) | (bytes[offset+5] << 16) | (bytes[offset+6] << 8) | bytes[offset+7];
-                    } else {
-                        // ID3v2.4 uses synchsafe integers
-                        frameSize = (bytes[offset+4] & 0x7f) << 21 | 
-                                   (bytes[offset+5] & 0x7f) << 14 | 
-                                   (bytes[offset+6] & 0x7f) << 7 | 
-                                   (bytes[offset+7] & 0x7f);
+                    // Check if we've reached padding or invalid data
+                    if (frameId === '\0\0\0\0' || frameId[0] === '\0') {
+                        logger.debug("Reached padding or end of tags");
+                        break;
                     }
                     
-                    if (frameSize <= 0 || frameSize > bytes.length - offset) {
+                    // Handle corrupted tags or invalid frame ids
+                    if (!frameId.match(/[A-Z0-9]{4}/)) {
+                        logger.warn(`Invalid frame ID encountered: "${frameId.replace(/[^\x20-\x7E]/g, '?')}" at offset ${offset}`);
+                        // Skip ahead one byte and try again
+                        offset += 1;
+                        continue;
+                    }
+                    
+                    // Frame size (4 bytes) - handle based on version
+                    let frameSize;
+                    try {
+                        if (majorVersion < 4) {
+                            // ID3v2.2 and ID3v2.3 use big-endian
+                            frameSize = (bytes[offset+4] << 24) | (bytes[offset+5] << 16) | (bytes[offset+6] << 8) | bytes[offset+7];
+                        } else {
+                            // ID3v2.4 uses synchsafe integers
+                            frameSize = (bytes[offset+4] & 0x7f) << 21 | 
+                                       (bytes[offset+5] & 0x7f) << 14 | 
+                                       (bytes[offset+6] & 0x7f) << 7 | 
+                                       (bytes[offset+7] & 0x7f);
+                        }
+                    } catch (e) {
+                        logger.warn(`Error reading frame size for ${frameId}: ${e.message}`);
+                        offset += 10;  // Skip this frame header and continue
+                        continue;
+                    }
+                    
+                    // Validate frame size to prevent corrupted data processing
+                    if (frameSize <= 0 || frameSize > bytes.length - offset - 10) {
                         logger.warn(`Invalid frame size for ${frameId}: ${frameSize}`);
-                        break; // Invalid frame size
+                        // Skip this frame and continue
+                        offset += 10;
+                        continue;
                     }
                     
                     logger.trace(`Found frame: ${frameId}, size: ${frameSize}`);
@@ -248,12 +293,11 @@ class FileHandler {
                     // Process known frame types
                     if (frameId === 'TALB' || frameId === 'TAL') { // Album title
                         // Get encoding byte to determine text encoding
-                        const encodingByte = bytes[offset];
-                        let textData = null;
-                        let usedEncoding = "unknown";
-                        
                         try {
-                            logger.trace(`Decoding album tag with encoding byte: ${encodingByte}`);
+                            const encodingByte = bytes[offset];
+                            let textData = null;
+                            let usedEncoding = "unknown";
+                            
                             // Handle different text encodings based on the encoding byte
                             if (encodingByte === 0) {
                                 // ISO-8859-1
@@ -475,6 +519,12 @@ class FileHandler {
                     
                     // Move to next frame
                     offset += frameSize;
+                    
+                    // Safety check: ensure we don't get stuck in an infinite loop
+                    if (frameSize === 0) {
+                        logger.warn("Zero-size frame detected, breaking out of tag parsing");
+                        break;
+                    }
                 }
                 
                 return tags;
