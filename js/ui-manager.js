@@ -181,32 +181,35 @@ class UIManager {
     }
     
     // Update compare button state based on authentication status and files
-    updateCompareButtonState(localFiles, isAuthenticated, hasCachedData) {
-        // Enable compare button if we have files and either:
-        // 1. We're authenticated with Spotify, or
-        // 2. We have cached data available
-        let usingCacheOnly = false;
+    updateCompareButtonState(hasFiles = null, isAuthenticated = null) {
+        // If parameters not provided, get them
+        const filesAvailable = hasFiles !== null ? hasFiles : this.hasFiles();
+        const isAuth = isAuthenticated !== null ? isAuthenticated : spotifyApi.isAuthenticated();
+        const hasCachedData = spotifyApi.hasCachedData();
         
-        if (localFiles.length > 0 && (isAuthenticated || hasCachedData)) {
-            this.compareButton.disabled = false;
-            
-            // Show indicator if we're going to use cached data
-            if (!isAuthenticated && hasCachedData) {
-                this.compareButton.textContent = "Compare with Cached Data";
-                this.compareButton.classList.add("cache-mode");
-                usingCacheOnly = true;
-            } else {
-                this.compareButton.textContent = "Compare with Spotify";
-                this.compareButton.classList.remove("cache-mode");
-                usingCacheOnly = false;
-            }
+        // Enable compare button if authenticated or cache available AND files selected
+        const canCompare = (isAuth || hasCachedData) && filesAvailable;
+        
+        logger.debug(`Compare button evaluation: filesAvailable=${filesAvailable}, isAuth=${isAuth}, hasCachedData=${hasCachedData}, canCompare=${canCompare}`);
+        
+        this.compareButton.disabled = !canCompare;
+        
+        // Update button text based on authentication state
+        if (isAuth) {
+            this.compareButton.textContent = 'Compare with Spotify';
+            this.compareButton.classList.remove('cache-mode');
+        } else if (hasCachedData) {
+            this.compareButton.textContent = 'Compare with Cached Data';
+            this.compareButton.classList.add('cache-mode');
         } else {
-            this.compareButton.disabled = true;
-            this.compareButton.textContent = "Compare with Spotify";
-            this.compareButton.classList.remove("cache-mode");
+            this.compareButton.textContent = 'Compare with Spotify';
+            this.compareButton.classList.remove('cache-mode');
         }
         
-        return usingCacheOnly;
+        logger.debug(`Compare button ${canCompare ? 'enabled' : 'disabled'}, Auth state: ${isAuth ? 'authenticated' : 'not authenticated'}`);
+        
+        // Return whether we're using cache-only mode
+        return !isAuth && hasCachedData && filesAvailable;
     }
     
     // Show loading state
@@ -309,37 +312,6 @@ class UIManager {
         }
     }
     
-    updateCompareButtonState(hasFiles = null, isAuthenticated = null) {
-        // If parameters not provided, get them
-        const filesAvailable = hasFiles !== null ? hasFiles : this.hasFiles();
-        const isAuth = isAuthenticated !== null ? isAuthenticated : spotifyApi.isAuthenticated();
-        const hasCachedData = spotifyApi.hasCachedData();
-        
-        // Enable compare button if authenticated or cache available AND files selected
-        const canCompare = (isAuth || hasCachedData) && filesAvailable;
-        
-        logger.debug(`Compare button evaluation: filesAvailable=${filesAvailable}, isAuth=${isAuth}, hasCachedData=${hasCachedData}, canCompare=${canCompare}`);
-        
-        this.compareButton.disabled = !canCompare;
-        
-        // Update button text based on authentication state
-        if (isAuth) {
-            this.compareButton.textContent = 'Compare with Spotify';
-            this.compareButton.classList.remove('cache-mode');
-        } else if (hasCachedData) {
-            this.compareButton.textContent = 'Compare with Cached Data';
-            this.compareButton.classList.add('cache-mode');
-        } else {
-            this.compareButton.textContent = 'Compare with Spotify';
-            this.compareButton.classList.remove('cache-mode');
-        }
-        
-        logger.debug(`Compare button ${canCompare ? 'enabled' : 'disabled'}, Auth state: ${isAuth ? 'authenticated' : 'not authenticated'}`);
-        
-        // Return whether we're using cache-only mode
-        return !isAuth && hasCachedData && filesAvailable;
-    }
-    
     hasFiles() {
         // First check if we have files in the fileList element
         const fileList = document.getElementById('file-list');
@@ -382,8 +354,6 @@ class UIManager {
         // You could also display this in the UI or alert it
         return message;
     }
-
-    // Add this method to the UIManager class
 
     showError(message) {
         // Check if we have a dedicated error element

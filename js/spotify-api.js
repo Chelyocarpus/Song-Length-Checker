@@ -302,9 +302,9 @@ class SpotifyAPI {
             return normalized;
         };
         
-        const normalizedTrack = getNormalizedString(track);
-        const normalizedArtist = getNormalizedString(artist);
-        const normalizedAlbum = getNormalizedString(album);
+        let normalizedTrack = getNormalizedString(track);
+        let normalizedArtist = getNormalizedString(artist);
+        let normalizedAlbum = getNormalizedString(album);
         
         // Generate cache key
         const cacheKey = this.generateSearchKey(normalizedTrack, normalizedArtist, normalizedAlbum);

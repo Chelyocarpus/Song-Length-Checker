@@ -72,8 +72,12 @@ class FileUploader {
             return;
         }
         
+        let error = null; // Declare error variable at function scope
+        
         try {
-            if (uiManager.dragDropArea) uiManager.dragDropArea.classList.add('processing');
+            if (uiManager.dragDropArea) {
+                uiManager.dragDropArea.classList.add('processing');
+            }
             
             const options = {
                 types: [
@@ -101,11 +105,14 @@ class FileUploader {
             if (typeof uiManager.updateUIState === 'function') {
                 uiManager.updateUIState();
             }
-        } catch (error) {
+        } catch (err) {
+            error = err; // Store the error
             console.error('Error using modern file picker:', error);
         } finally {
             // Always remove processing state
-            if (uiManager.dragDropArea) uiManager.dragDropArea.classList.remove('processing');
+            if (uiManager.dragDropArea) {
+                uiManager.dragDropArea.classList.remove('processing');
+            }
             
             if (error && error.name !== 'AbortError') {
                 alert(`Error selecting files: ${error.message}`);
@@ -121,8 +128,12 @@ class FileUploader {
             return;
         }
         
+        let error = null; // Declare error variable at function scope
+        
         try {
-            if (uiManager.dragDropArea) uiManager.dragDropArea.classList.add('processing');
+            if (uiManager.dragDropArea) {
+                uiManager.dragDropArea.classList.add('processing');
+            }
             
             const dirHandle = await window.showDirectoryPicker();
             const files = await this.collectFilesFromDirectory(dirHandle);
@@ -141,7 +152,9 @@ class FileUploader {
             console.error('Error using modern folder picker:', error);
         } finally {
             // Always remove processing state
-            if (uiManager.dragDropArea) uiManager.dragDropArea.classList.remove('processing');
+            if (uiManager.dragDropArea) {
+                uiManager.dragDropArea.classList.remove('processing');
+            }
             
             if (error && error.name !== 'AbortError') {
                 alert(`Error selecting folder: ${error.message}`);
@@ -155,21 +168,24 @@ class FileUploader {
         
         // Iterate through all entries in the directory
         for await (const entry of dirHandle.values()) {
-            const entryPath = path ? `${path}/${entry.name}` : entry.name;
+            const { name, kind } = entry; // Use object destructuring for entry properties
+            const entryPath = path ? `${path}/${name}` : name;
             
-            if (entry.kind === 'file') {
+            if (kind === 'file') {
                 // Check if it's a supported audio file
-                const extension = '.' + entry.name.split('.').pop().toLowerCase();
+                const extension = '.' + name.split('.').pop().toLowerCase();
                 if (config.supportedAudioFormats.includes(extension)) {
                     const file = await entry.getFile();
+                    const { type, lastModified } = file; // Destructure file properties
+                    
                     // Create a new File object with the path information
                     files.push(new File(
                         [file], 
                         entryPath, 
-                        { type: file.type, lastModified: file.lastModified }
+                        { type, lastModified } // Use shorthand property names
                     ));
                 }
-            } else if (entry.kind === 'directory') {
+            } else if (kind === 'directory') {
                 // Recursively process subdirectories
                 const subDirFiles = await this.collectFilesFromDirectory(entry, entryPath);
                 files.push(...subDirFiles);
@@ -222,7 +238,9 @@ class FileUploader {
                     } else {
                         // Handle as regular file
                         const file = item.getAsFile();
-                        if (file) allFiles.push(file);
+                        if (file) {
+                            allFiles.push(file);
+                        }
                     }
                 }));
                 
@@ -326,12 +344,10 @@ class FileUploader {
             } else {
                 uiManager.folderSelector.click();
             }
+        } else if (this.isFileSystemAccessAPIAvailable()) {
+            this.useModernFilePicker(fileHandler, uiManager);
         } else {
-            if (this.isFileSystemAccessAPIAvailable()) {
-                this.useModernFilePicker(fileHandler, uiManager);
-            } else {
-                uiManager.filesSelector.click();
-            }
+            uiManager.filesSelector.click();
         }
     }
 }

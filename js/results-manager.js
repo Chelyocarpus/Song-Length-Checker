@@ -23,54 +23,63 @@ class ResultsManager {
         this.results = results;
         this.issueCount = issueCount;
         
-        uiManager.resultsBody.innerHTML = '';
+        const { resultsBody, resultsTable, resultsSummary, showAllIssuesCheckbox, 
+                showWarningsCheckbox, showErrorsCheckbox, showNotFoundCheckbox } = uiManager;
+        
+        resultsBody.innerHTML = '';
         
         // Add each result to the table
         results.forEach((result, index) => {
+            const { hasIssue, status, fileName, localDurationFormatted, 
+                    spotifyDurationFormatted, differenceFormatted, 
+                    notFoundReason, error, errorDetails } = result;
+            
             // Create the main result row
             const row = document.createElement('tr');
             row.dataset.index = index;
             row.dataset.resultType = 'main-row';
             
-            if (result.hasIssue) {
+            if (hasIssue) {
                 row.className = 'issue-row';
                 row.id = `issue-${index}`;
                 
                 // Add issue type as a data attribute for better filtering
-                if (result.status === config.statusMessages.warning) {
+                const { warning, error: errorStatus, notFound } = config.statusMessages;
+                
+                if (status === warning) {
                     row.dataset.issueType = 'warning';
-                } else if (result.status === config.statusMessages.error) {
+                } else if (status === errorStatus) {
                     row.dataset.issueType = 'error';
-                } else if (result.status === config.statusMessages.notFound) {
+                } else if (status === notFound) {
                     row.dataset.issueType = 'not-found';
-                } else if (result.status === 'ERROR') {
+                } else if (status === 'ERROR') {
                     row.dataset.issueType = 'error';
                 }
             }
             
             // Use the complete filename instead of just the title
-            let titleDisplay = result.fileName;
+            const titleDisplay = fileName;
             
             // Add issue badge to status column for visual emphasis
-            let statusDisplay = result.status;
-            if (result.hasIssue) {
-                statusDisplay = `${result.status} <span class="issue-badge">!</span>`;
+            let statusDisplay = status;
+            if (hasIssue) {
+                statusDisplay = `${status} <span class="issue-badge">!</span>`;
             }
             
             // Song (without Artist column)
             row.innerHTML = `
                 <td>${titleDisplay}</td>
-                <td>${result.localDurationFormatted}</td>
-                <td>${result.spotifyDurationFormatted}</td>
-                <td>${result.differenceFormatted}</td>
-                <td class="status-${result.status.toLowerCase()}">${statusDisplay}</td>
+                <td>${localDurationFormatted}</td>
+                <td>${spotifyDurationFormatted}</td>
+                <td>${differenceFormatted}</td>
+                <td class="status-${status.toLowerCase()}">${statusDisplay}</td>
             `;
             
             // Add the row to the table
-            uiManager.resultsBody.appendChild(row);
+            resultsBody.appendChild(row);
             
             // Add not found reason row if applicable
-            if (result.status === config.statusMessages.notFound && result.notFoundReason) {
+            if (status === config.statusMessages.notFound && notFoundReason) {
                 const reasonRow = document.createElement('tr');
                 reasonRow.className = 'not-found-reason-row';
                 reasonRow.dataset.resultType = 'reason-row';
@@ -84,17 +93,17 @@ class ResultsManager {
                 reasonCell.className = 'not-found-reason';
                 reasonCell.innerHTML = `
                     <div class="reason-content">
-                        <span class="reason-label">Reason:</span> ${result.notFoundReason}
+                        <span class="reason-label">Reason:</span> ${notFoundReason}
                     </div>
                 `;
                 
                 reasonRow.appendChild(reasonCell);
-                uiManager.resultsBody.appendChild(reasonRow);
+                resultsBody.appendChild(reasonRow);
             }
             
             // Add error reason row if applicable
-            if ((result.status === config.statusMessages.error || result.status === 'ERROR') && 
-                (result.error || result.errorDetails)) {
+            if ((status === config.statusMessages.error || status === 'ERROR') && 
+                (error || errorDetails)) {
                 const errorRow = document.createElement('tr');
                 errorRow.className = 'error-reason-row';
                 errorRow.dataset.resultType = 'reason-row';
@@ -108,9 +117,9 @@ class ResultsManager {
                 errorCell.className = 'error-reason';
                 
                 // Combine the technical error with the user-friendly explanation
-                const errorContent = result.errorDetails 
-                    ? `${result.errorDetails} ${result.error ? `<span class="technical-error">(${result.error})</span>` : ''}`
-                    : (result.error || 'Unknown error');
+                const errorContent = errorDetails 
+                    ? `${errorDetails} ${error ? `<span class="technical-error">(${error})</span>` : ''}`
+                    : (error || 'Unknown error');
                 
                 errorCell.innerHTML = `
                     <div class="reason-content">
@@ -119,27 +128,35 @@ class ResultsManager {
                 `;
                 
                 errorRow.appendChild(errorCell);
-                uiManager.resultsBody.appendChild(errorRow);
+                resultsBody.appendChild(errorRow);
             }
         });
         
         // Show table and update summary
-        uiManager.resultsTable.classList.remove('hidden');
+        resultsTable.classList.remove('hidden');
         
         // Update summary text with more prominence for issues
         if (issueCount === 0) {
-            uiManager.resultsSummary.textContent = `✅ All ${results.length} tracks match their Spotify versions within tolerance.`;
-            uiManager.resultsSummary.className = 'no-issues';
+            resultsSummary.textContent = `✅ All ${results.length} tracks match their Spotify versions within tolerance.`;
+            resultsSummary.className = 'no-issues';
         } else {
-            uiManager.resultsSummary.innerHTML = `⚠️ <strong>Found ${issueCount} issues</strong> out of ${results.length} tracks.`;
-            uiManager.resultsSummary.className = 'has-issues';
+            resultsSummary.innerHTML = `⚠️ <strong>Found ${issueCount} issues</strong> out of ${results.length} tracks.`;
+            resultsSummary.className = 'has-issues';
         }
         
         // Reset all filter checkboxes if they exist
-        if (uiManager.showAllIssuesCheckbox) uiManager.showAllIssuesCheckbox.checked = false;
-        if (uiManager.showWarningsCheckbox) uiManager.showWarningsCheckbox.checked = false;
-        if (uiManager.showErrorsCheckbox) uiManager.showErrorsCheckbox.checked = false;
-        if (uiManager.showNotFoundCheckbox) uiManager.showNotFoundCheckbox.checked = false;
+        if (showAllIssuesCheckbox) {
+            showAllIssuesCheckbox.checked = false;
+        }
+        if (showWarningsCheckbox) {
+            showWarningsCheckbox.checked = false;
+        }
+        if (showErrorsCheckbox) {
+            showErrorsCheckbox.checked = false;
+        }
+        if (showNotFoundCheckbox) {
+            showNotFoundCheckbox.checked = false;
+        }
         
         // Remove active class from all filter options
         document.querySelectorAll('.filter-option').forEach(option => {
@@ -171,10 +188,18 @@ class ResultsManager {
         const errorsOption = document.querySelector('label[for="show-errors"]')?.parentElement;
         const notFoundOption = document.querySelector('label[for="show-not-found"]')?.parentElement;
         
-        if (allIssuesOption) allIssuesOption.classList.toggle('active', showAllIssues);
-        if (warningsOption) warningsOption.classList.toggle('active', showWarnings);
-        if (errorsOption) errorsOption.classList.toggle('active', showErrors);
-        if (notFoundOption) notFoundOption.classList.toggle('active', showNotFound);
+        if (allIssuesOption) {
+            allIssuesOption.classList.toggle('active', showAllIssues);
+        }
+        if (warningsOption) {
+            warningsOption.classList.toggle('active', showWarnings);
+        }
+        if (errorsOption) {
+            errorsOption.classList.toggle('active', showErrors);
+        }
+        if (notFoundOption) {
+            notFoundOption.classList.toggle('active', showNotFound);
+        }
         
         // Check which checkbox triggered the event
         const activeElement = document.activeElement;
@@ -186,9 +211,15 @@ class ResultsManager {
             uiManager.showNotFoundCheckbox.checked = showAllIssues;
             
             // Update the active states
-            if (warningsOption) warningsOption.classList.toggle('active', showAllIssues);
-            if (errorsOption) errorsOption.classList.toggle('active', showAllIssues);
-            if (notFoundOption) notFoundOption.classList.toggle('active', showAllIssues);
+            if (warningsOption) {
+                warningsOption.classList.toggle('active', showAllIssues);
+            }
+            if (errorsOption) {
+                errorsOption.classList.toggle('active', showAllIssues);
+            }
+            if (notFoundOption) {
+                notFoundOption.classList.toggle('active', showAllIssues);
+            }
         } else {
             // If individual filter was clicked, update "All Issues" based on the state of all specific filters
             const allSpecificFiltersChecked = showWarnings && showErrors && showNotFound;
@@ -197,10 +228,14 @@ class ResultsManager {
             // Only update "All Issues" if all specific filters are either all checked or all unchecked
             if (allSpecificFiltersChecked && !showAllIssues) {
                 uiManager.showAllIssuesCheckbox.checked = true;
-                if (allIssuesOption) allIssuesOption.classList.add('active');
+                if (allIssuesOption) {
+                    allIssuesOption.classList.add('active');
+                }
             } else if (noSpecificFiltersChecked && showAllIssues) {
                 uiManager.showAllIssuesCheckbox.checked = false;
-                if (allIssuesOption) allIssuesOption.classList.remove('active');
+                if (allIssuesOption) {
+                    allIssuesOption.classList.remove('active');
+                }
             }
         }
         

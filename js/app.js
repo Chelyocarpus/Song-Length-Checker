@@ -4,51 +4,30 @@ document.addEventListener('DOMContentLoaded', () => {
     let isAuthenticated = false;
     let usingCacheOnly = false;
     
-    // Initialize UI elements
-    uiManager.initUI();
-    
-    // Initialize cache UI and settings
-    cacheManager.initCacheUI(uiManager);
-    
-    // Connect FileHandler with UIManager
-    fileHandler.setUIManager(uiManager);
-    
-    // Load saved credentials from localStorage if available
-    cacheManager.loadSavedCredentials(uiManager);
-    
-    // Check if we can enable the compare button with cached data
-    updateCompareButtonState();
-    
-    // Event Listeners
-    uiManager.authButton.addEventListener('click', authenticateSpotify);
-    uiManager.folderSelector.addEventListener('change', e => fileUploader.handleFileSelection(e, fileHandler, uiManager));
-    uiManager.filesSelector.addEventListener('change', e => fileUploader.handleFileSelection(e, fileHandler, uiManager));
-    uiManager.compareButton.addEventListener('click', compareSongs);
-    uiManager.clearCacheButton.addEventListener('click', () => cacheManager.clearCache(uiManager));
-    uiManager.cacheEnabledToggle.addEventListener('change', e => cacheManager.toggleCacheEnabled(e, uiManager));
-    
-    // Upload type toggle handlers
-    uiManager.folderOption.addEventListener('change', e => uiManager.toggleUploadType(e, fileUploader));
-    uiManager.filesOption.addEventListener('change', e => uiManager.toggleUploadType(e, fileUploader));
-    
-    // Add filter event listeners only if elements exist
-    if (uiManager.showAllIssuesCheckbox) uiManager.showAllIssuesCheckbox.addEventListener('change', () => resultsManager.filterIssues(uiManager));
-    if (uiManager.showWarningsCheckbox) uiManager.showWarningsCheckbox.addEventListener('change', () => resultsManager.filterIssues(uiManager));
-    if (uiManager.showErrorsCheckbox) uiManager.showErrorsCheckbox.addEventListener('change', () => resultsManager.filterIssues(uiManager));
-    if (uiManager.showNotFoundCheckbox) uiManager.showNotFoundCheckbox.addEventListener('change', () => resultsManager.filterIssues(uiManager));
-    
-    // Add new event listeners for modern file selection
-    if (uiManager.modernFilePickerBtn) uiManager.modernFilePickerBtn.addEventListener('click', () => fileUploader.useModernFilePicker(fileHandler, uiManager));
-    if (uiManager.modernFolderPickerBtn) uiManager.modernFolderPickerBtn.addEventListener('click', () => fileUploader.useModernFolderPicker(fileHandler, uiManager));
-    if (uiManager.dragDropArea) {
-        uiManager.dragDropArea.addEventListener('dragover', e => fileUploader.handleDragOver(e, uiManager));
-        uiManager.dragDropArea.addEventListener('dragleave', e => fileUploader.handleDragLeave(e, uiManager));
-        uiManager.dragDropArea.addEventListener('drop', e => fileUploader.handleFileDrop(e, fileHandler, uiManager));
-        uiManager.dragDropArea.addEventListener('click', () => fileUploader.triggerAppropriateFilePicker(fileHandler, uiManager));
-    }
+    // Update compare button state based on authentication and cached data
+    const updateCompareButtonState = function() {
+        const localFiles = fileUploader.getLocalFiles();
+        const hasFiles = localFiles && localFiles.length > 0;
+        const isAuthenticated = spotifyApi.isAuthenticated();
+        const hasCachedData = spotifyApi.hasCachedData();
+        
+        logger.debug(`Updating compare button state: authenticated=${isAuthenticated}, hasCachedData=${hasCachedData}, hasFiles=${hasFiles}, fileCount=${localFiles?.length || 0}`);
+        
+        // Set global authentication state
+        window.isAuthenticated = isAuthenticated;
+        
+        // Check if uiManager has the new updateUIState method
+        if (typeof uiManager.updateUIState === 'function') {
+            uiManager.updateUIState();
+            usingCacheOnly = !isAuthenticated && hasCachedData;
+        } else {
+            // Fallback to old method
+            usingCacheOnly = uiManager.updateCompareButtonState(hasFiles, isAuthenticated, hasCachedData);
+        }
+    };
     
     // Handle Spotify authentication
-    async function authenticateSpotify() {
+    const authenticateSpotify = async function() {
         const clientId = uiManager.clientIdInput.value.trim();
         const clientSecret = uiManager.clientSecretInput.value.trim();
         const rememberSecret = uiManager.rememberSecretCheckbox.checked;
@@ -99,50 +78,10 @@ document.addEventListener('DOMContentLoaded', () => {
         } finally {
             uiManager.authButton.disabled = false;
         }
-    }
-    
-    // Update compare button state based on authentication and cached data
-    function updateCompareButtonState() {
-        const localFiles = fileUploader.getLocalFiles();
-        const hasFiles = localFiles && localFiles.length > 0;
-        const isAuthenticated = spotifyApi.isAuthenticated();
-        const hasCachedData = spotifyApi.hasCachedData();
-        
-        logger.debug(`Updating compare button state: authenticated=${isAuthenticated}, hasCachedData=${hasCachedData}, hasFiles=${hasFiles}, fileCount=${localFiles?.length || 0}`);
-        
-        // Set global authentication state
-        window.isAuthenticated = isAuthenticated;
-        
-        // Check if uiManager has the new updateUIState method
-        if (typeof uiManager.updateUIState === 'function') {
-            uiManager.updateUIState();
-            usingCacheOnly = !isAuthenticated && hasCachedData;
-        } else {
-            // Fallback to old method
-            usingCacheOnly = uiManager.updateCompareButtonState(hasFiles, isAuthenticated, hasCachedData);
-        }
-    }
-    
-    // Event to trigger when files are added
-    function triggerFilesAddedEvent() {
-        // Create a custom event
-        const filesAddedEvent = new CustomEvent('filesAdded', {
-            detail: { files: fileUploader.getLocalFiles() }
-        });
-        
-        // Dispatch the event
-        document.dispatchEvent(filesAddedEvent);
-    }
-    
-    // Modify the file uploader to dispatch an event when files change
-    const originalSetLocalFiles = fileUploader.setLocalFiles;
-    fileUploader.setLocalFiles = function(files) {
-        originalSetLocalFiles.call(this, files);
-        triggerFilesAddedEvent();
     };
-    
+
     // Compare local files with Spotify data
-    async function compareSongs() {
+    const compareSongs = async function() {
         const localFiles = fileUploader.getLocalFiles();
         if (localFiles.length === 0) {
             return;
@@ -347,8 +286,81 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Update cache status information after processing
         cacheManager.updateCacheStatus(uiManager);
-    }
+    };
 
+    // Event to trigger when files are added
+    const triggerFilesAddedEvent = function() {
+        // Create a custom event
+        const filesAddedEvent = new CustomEvent('filesAdded', {
+            detail: { files: fileUploader.getLocalFiles() }
+        });
+        
+        // Dispatch the event
+        document.dispatchEvent(filesAddedEvent);
+    };
+    
+    // Modify the file uploader to dispatch an event when files change
+    const originalSetLocalFiles = fileUploader.setLocalFiles;
+    fileUploader.setLocalFiles = function(files) {
+        originalSetLocalFiles.call(this, files);
+        triggerFilesAddedEvent();
+    };
+
+    // Initialize UI elements
+    uiManager.initUI();
+    
+    // Initialize cache UI and settings
+    cacheManager.initCacheUI(uiManager);
+    
+    // Connect FileHandler with UIManager
+    fileHandler.setUIManager(uiManager);
+    
+    // Load saved credentials from localStorage if available
+    cacheManager.loadSavedCredentials(uiManager);
+    
+    // Check if we can enable the compare button with cached data
+    updateCompareButtonState();
+    
+    // Event Listeners
+    uiManager.authButton.addEventListener('click', authenticateSpotify);
+    uiManager.folderSelector.addEventListener('change', e => fileUploader.handleFileSelection(e, fileHandler, uiManager));
+    uiManager.filesSelector.addEventListener('change', e => fileUploader.handleFileSelection(e, fileHandler, uiManager));
+    uiManager.compareButton.addEventListener('click', compareSongs);
+    uiManager.clearCacheButton.addEventListener('click', () => cacheManager.clearCache(uiManager));
+    uiManager.cacheEnabledToggle.addEventListener('change', e => cacheManager.toggleCacheEnabled(e, uiManager));
+    
+    // Upload type toggle handlers
+    uiManager.folderOption.addEventListener('change', e => uiManager.toggleUploadType(e, fileUploader));
+    uiManager.filesOption.addEventListener('change', e => uiManager.toggleUploadType(e, fileUploader));
+    
+    // Add filter event listeners only if elements exist
+    if (uiManager.showAllIssuesCheckbox) {
+        uiManager.showAllIssuesCheckbox.addEventListener('change', () => resultsManager.filterIssues(uiManager));
+    }
+    if (uiManager.showWarningsCheckbox) {
+        uiManager.showWarningsCheckbox.addEventListener('change', () => resultsManager.filterIssues(uiManager));
+    }
+    if (uiManager.showErrorsCheckbox) {
+        uiManager.showErrorsCheckbox.addEventListener('change', () => resultsManager.filterIssues(uiManager));
+    }
+    if (uiManager.showNotFoundCheckbox) {
+        uiManager.showNotFoundCheckbox.addEventListener('change', () => resultsManager.filterIssues(uiManager));
+    }
+    
+    // Add new event listeners for modern file selection
+    if (uiManager.modernFilePickerBtn) {
+        uiManager.modernFilePickerBtn.addEventListener('click', () => fileUploader.useModernFilePicker(fileHandler, uiManager));
+    }
+    if (uiManager.modernFolderPickerBtn) {
+        uiManager.modernFolderPickerBtn.addEventListener('click', () => fileUploader.useModernFolderPicker(fileHandler, uiManager));
+    }
+    if (uiManager.dragDropArea) {
+        uiManager.dragDropArea.addEventListener('dragover', e => fileUploader.handleDragOver(e, uiManager));
+        uiManager.dragDropArea.addEventListener('dragleave', e => fileUploader.handleDragLeave(e, uiManager));
+        uiManager.dragDropArea.addEventListener('drop', e => fileUploader.handleFileDrop(e, fileHandler, uiManager));
+        uiManager.dragDropArea.addEventListener('click', () => fileUploader.triggerAppropriateFilePicker(fileHandler, uiManager));
+    }
+    
     // Add or modify these event handlers
 
     // Authenticate button click handler
