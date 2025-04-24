@@ -51,6 +51,47 @@ class UIManager {
         // Processing state
         this.totalFiles = 0;
         this.processedFiles = 0;
+
+        // Add new elements for error display
+        this.errorMessageContainer = document.getElementById('error-message') || this.createErrorMessageElement();
+        
+        // Error message timeout
+        this._errorMessageTimeout = null;
+    }
+    
+    // Create error message element if it doesn't exist in the DOM
+    createErrorMessageElement() {
+        const container = document.createElement('div');
+        container.id = 'error-message';
+        container.className = 'error-message';
+        container.setAttribute('role', 'alert');
+        container.setAttribute('aria-live', 'assertive');
+        container.setAttribute('aria-hidden', 'true'); // Set hidden by default
+        
+        // Add icon and content container
+        container.innerHTML = `
+            <span class="error-message-icon">⚠️</span>
+            <div class="error-message-content"></div>
+            <span class="error-message-dismiss" aria-label="Dismiss" tabindex="0">×</span>
+        `;
+        
+        // Add event listener for dismiss button
+        container.querySelector('.error-message-dismiss').addEventListener('click', () => {
+            this.hideError();
+        });
+        
+        // Find appropriate location to insert the error message
+        const targetLocation = document.querySelector('.auth-section') || document.querySelector('.container');
+        if (targetLocation) {
+            targetLocation.prepend(container);
+        } else {
+            document.body.prepend(container);
+        }
+        
+        // Ensure error is hidden by default
+        container.style.display = 'none';
+        
+        return container;
     }
     
     // Initialize UI elements
@@ -83,6 +124,9 @@ class UIManager {
             this.folderInputContainer.classList.add('hidden');
             this.filesInputContainer.classList.remove('hidden');
         }
+
+        // Make sure any error messages are hidden on init
+        this.hideError();
     }
     
     // Helper function to safely add styles to filter options
@@ -212,7 +256,7 @@ class UIManager {
         return !isAuth && hasCachedData && filesAvailable;
     }
     
-    // Show loading state
+    // Show loading state with improved visual feedback
     showLoading() {
         this.compareButton.disabled = true;
         this.loadingIndicator.classList.remove('hidden');
@@ -220,10 +264,22 @@ class UIManager {
         this.resultsSummary.textContent = '';
         this.resultsSummary.className = '';
         
+        // Hide any existing error messages
+        this.hideError();
+        
         // Reset progress tracking
         this.totalFiles = 0;
         this.processedFiles = 0;
         this.updateProgress(0, 0);
+        
+        // Add processing class to compare button for visual feedback
+        this.compareButton.classList.add('processing');
+        
+        // Ensure the results section is visible so user can see progress
+        const resultsSection = document.querySelector('.results-section');
+        if (resultsSection && resultsSection.classList.contains('hidden')) {
+            resultsSection.classList.remove('hidden');
+        }
     }
     
     // Initialize progress tracking with total files
@@ -264,10 +320,10 @@ class UIManager {
     hideLoading() {
         this.loadingIndicator.classList.add('hidden');
         this.compareButton.disabled = false;
+        this.compareButton.classList.remove('processing');
     }
 
     // Add or modify these functions to fix authentication state handling
-
     updateUIState() {
         // Get file state before updating UI
         const hasFiles = this.hasFiles();
@@ -355,34 +411,70 @@ class UIManager {
         return message;
     }
 
-    showError(message) {
-        // Check if we have a dedicated error element
-        const errorElement = document.getElementById('error-message');
+    // Improved error display with timeout and animation
+    showError(message, duration = 5000) {
+        // Clear any existing timeout
+        if (this._errorMessageTimeout) {
+            clearTimeout(this._errorMessageTimeout);
+        }
         
-        if (errorElement) {
-            // If we have a dedicated error element, use it
-            errorElement.textContent = message;
-            errorElement.style.display = message ? 'block' : 'none';
-        } else if (this.authStatus) {
-            // Otherwise, use the auth status element for errors
-            if (message) {
+        if (!message) {
+            this.hideError();
+            return;
+        }
+        
+        // Use the error message container if it exists
+        if (this.errorMessageContainer) {
+            const contentElement = this.errorMessageContainer.querySelector('.error-message-content');
+            if (contentElement) {
+                contentElement.textContent = message;
+            } else {
+                this.errorMessageContainer.textContent = message;
+            }
+            
+            // Show the error with proper ARIA attributes
+            this.errorMessageContainer.style.display = 'flex';
+            this.errorMessageContainer.classList.add('show');
+            this.errorMessageContainer.setAttribute('aria-hidden', 'false');
+            
+            // Set timeout to automatically hide the error
+            if (duration > 0) {
+                this._errorMessageTimeout = setTimeout(() => {
+                    this.hideError();
+                }, duration);
+            }
+        } else {
+            // Fallback behavior for existing code
+            if (this.authStatus) {
                 this.authStatus.innerHTML = `<span class="auth-error">${message} ❌</span>`;
                 this.authStatus.classList.add('auth-error-box');
             } else {
-                // Clear error if empty message
-                this.authStatus.classList.remove('auth-error-box');
-            }
-        } else {
-            // Fallback to alert if no suitable UI element
-            if (message) {
+                // Last resort fallback
                 console.error('UI Error:', message);
                 alert(`Error: ${message}`);
             }
         }
         
         // Log error to console
-        if (message) {
-            logger.error('UI Error:', message);
+        logger.error('UI Error:', message);
+    }
+    
+    // Hide error message
+    hideError() {
+        if (this._errorMessageTimeout) {
+            clearTimeout(this._errorMessageTimeout);
+            this._errorMessageTimeout = null;
+        }
+        
+        if (this.errorMessageContainer) {
+            this.errorMessageContainer.classList.remove('show');
+            this.errorMessageContainer.setAttribute('aria-hidden', 'true');
+            this.errorMessageContainer.style.display = 'none'; // Ensure it's hidden with CSS
+        }
+        
+        // Also clear the old error display if it exists
+        if (this.authStatus && this.authStatus.classList.contains('auth-error-box')) {
+            this.authStatus.classList.remove('auth-error-box');
         }
     }
 }

@@ -149,180 +149,336 @@ button:disabled {
     to { transform: rotate(360deg); }
 }
 
-/* Results Styles */
+/* Enhanced Results Styles */
 .results-section {
     background-color: white;
     padding: 20px;
     border-radius: 8px;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    margin-top: 30px;
 }
 
 #results-summary {
     margin-bottom: 15px;
-    padding: 10px;
-    border-radius: 4px;
+    padding: 15px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.summary-icon {
+    font-size: 24px;
+    margin-right: 10px;
+}
+
+.summary-details {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 8px;
+    font-size: 14px;
+}
+
+.summary-warning {
+    background-color: #fff3cd;
+    color: #856404;
+    padding: 4px 12px;
+    border-radius: 20px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.summary-error {
+    background-color: #f8d7da;
+    color: #721c24;
+    padding: 4px 12px;
+    border-radius: 20px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.summary-not-found {
+    background-color: #f8f9fa;
+    color: #6c757d;
+    padding: 4px 12px;
+    border-radius: 20px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
 }
 
 #results-summary.has-issues {
-    background-color: #ffeaea;
+    background-color: #fff3f3;
     border-left: 4px solid #ff5252;
 }
 
 #results-summary.no-issues {
-    background-color: #e6ffea;
+    background-color: #f0fff4;
     border-left: 4px solid #1DB954;
 }
 
+/* Enhanced Table Styles */
 table {
     width: 100%;
     border-collapse: collapse;
-    margin-top: 15px;
-}
-
-th, td {
-    padding: 12px 15px;
-    text-align: left;
-    border-bottom: 1px solid #ddd;
+    margin-top: 20px;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
 
 th {
-    background-color: #f2f2f2;
-    font-weight: bold;
+    padding: 14px 16px;
+    text-align: left;
+    background-color: #f8f9fa;
+    font-weight: 600;
+    color: #495057;
+    position: sticky;
+    top: 0;
+    border-bottom: 2px solid #dee2e6;
+    z-index: 10; /* Add z-index to ensure header stays above other elements */
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05); /* Add box shadow for better visibility */
+}
+
+td {
+    padding: 14px 16px;
+    text-align: left;
+    border-bottom: 1px solid #e9ecef;
+}
+
+tr {
+    transition: background-color 0.15s ease;
 }
 
 tr:hover {
-    background-color: #f5f5f5;
+    background-color: #f8f9fa;
 }
 
+/* Issue Row Styles */
 .issue-row {
-    background-color: #fff0f0;
-    border-left: 4px solid #ff5252;
-    font-weight: 600;
-}
-
-/* NOT FOUND reason styling */
-.not-found-reason-row {
-    background-color: #f9f9f9;
-    font-size: 14px;
-}
-
-.not-found-reason {
-    padding: 0 !important;
-}
-
-.reason-content {
-    padding: 8px 15px 8px 40px;
-    color: #666;
-    border-bottom: 1px dashed #ddd;
-    font-style: italic;
     position: relative;
+    cursor: pointer;
+    z-index: 1; /* Lower z-index than the header */
 }
 
-.reason-content::before {
-    content: "ℹ️";
-    position: absolute;
-    left: 15px;
-    top: 8px;
+.issue-row.expanded {
+    background-color: #f8f9fa;
 }
 
-.reason-label {
-    font-weight: bold;
-    color: #ff5252;
-    font-style: normal;
-    margin-right: 5px;
+.issue-row[data-issue-type="warning"] {
+    border-left: 4px solid #ffc107;
+    background-color: #fffbeb;
 }
 
-/* Ensure reason rows are visible with their parent rows */
-.not-found-reason-row {
-    display: table-row !important;
-}
-
-tr.issue-row + tr.not-found-reason-row {
-    border-top: none;
-}
-
-/* Fix for reason rows to ensure they're properly linked with their parent rows */
-tr.issue-row[data-issue-type="not-found"] + tr.not-found-reason-row {
-    display: table-row;
-    border-top: none;
-}
-
-/* Keep reason row hidden if the parent is hidden */
-tr.issue-row[style*="display: none"] + tr.not-found-reason-row {
-    display: none !important;
-}
-
-/* Error reason styling */
-.error-reason-row {
+.issue-row[data-issue-type="error"] {
+    border-left: 4px solid #ff5252;
     background-color: #fff0f0;
-    font-size: 14px;
-    display: table-row !important;
 }
 
-.error-reason {
-    padding: 0 !important;
+.issue-row[data-issue-type="not-found"] {
+    border-left: 4px solid #6c757d;
+    background-color: #f8f9fa;
 }
 
-.error-reason .reason-content {
-    background-color: #fff0f0;
-    border-bottom: 1px dashed #ffcccc;
-}
-
-.error-reason .reason-content::before {
-    content: "⚠️";
-}
-
-.technical-error {
-    color: #999;
-    font-size: 12px;
-    font-family: monospace;
-}
-
-/* Ensure all reason rows are visible with their parent rows */
-.not-found-reason-row,
-.error-reason-row {
-    display: table-row !important;
-}
-
-tr.issue-row + tr.not-found-reason-row,
-tr.issue-row + tr.error-reason-row {
-    border-top: none;
-}
-
-/* Fix for reason rows to ensure they're properly linked with their parent rows */
-tr.issue-row[data-issue-type="not-found"] + tr.not-found-reason-row,
-tr.issue-row[data-issue-type="error"] + tr.error-reason-row {
-    display: table-row;
-    border-top: none;
-}
-
-/* Keep reason row hidden if the parent is hidden */
-tr.issue-row[style*="display: none"] + tr.not-found-reason-row,
-tr.issue-row[style*="display: none"] + tr.error-reason-row {
-    display: none !important;
+/* Status Cell Styles */
+.status-cell {
+    font-weight: 500;
 }
 
 .status-ok {
-    color: #1DB954;
+    color: #198754;
 }
 
 .status-warning {
-    color: #ffa500;
+    color: #cc8400;
 }
 
 .status-error {
-    color: #ff5252;
+    color: #dc3545;
+    font-weight: 600;
 }
 
-.modified-title {
+.status-not-found {
+    color: #6c757d;
+}
+
+/* Detail Row & Content */
+.detail-row {
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #e9ecef;
+    position: relative;
+    z-index: 1; /* Ensure same z-index as issue rows */
+}
+
+.detail-cell {
+    padding: 0;
+}
+
+.detail-content {
+    padding: 16px;
+    border-top: 1px solid #e9ecef;
+}
+
+.detail-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.detail-icon {
+    font-size: 20px;
+}
+
+.detail-header h4 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.detail-body {
+    font-size: 14px;
+}
+
+.detail-body p {
+    margin-bottom: 12px;
+}
+
+/* Issue Type-Specific Detail Styles */
+.detail-warning {
+    background-color: #fffbeb;
+    border-left: 4px solid #ffc107;
+}
+
+.detail-error {
+    background-color: #fff0f0;
+    border-left: 4px solid #ff5252;
+}
+
+.detail-not-found {
+    background-color: #f8f9fa;
+    border-left: 4px solid #6c757d;
+}
+
+/* Comparison Details */
+.detail-comparison {
+    display: flex;
+    flex-direction: row;
+    gap: 12px;
+    margin-bottom: 12px;
+    background-color: white;
+    padding: 12px;
+    border-radius: 6px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.comparison-item {
+    flex: 1;
+}
+
+.comparison-label {
     font-size: 12px;
-    color: #777;
-    font-style: italic;
+    color: #6c757d;
+    margin-bottom: 4px;
+}
+
+.comparison-value {
+    font-weight: 600;
+}
+
+/* Tips Section */
+.detail-tips {
+    margin-top: 12px;
+    background-color: #e6f7ff;
+    padding: 12px;
+    border-radius: 6px;
+}
+
+.detail-tips h5 {
+    color: #0077cc;
+    font-weight: 600;
+    font-size: 14px;
+    margin: 0;
+    margin-bottom: 8px;
+}
+
+.detail-tips ul {
+    padding-left: 20px;
+    margin: 0;
+    font-size: 14px;
+    color: #003b66;
+}
+
+.detail-tips li {
+    margin-bottom: 4px;
+}
+
+/* Technical Error Display */
+.technical-error {
+    color: #6c757d;
+    font-size: 12px;
+    font-family: monospace;
+    margin-top: 4px;
     display: block;
 }
 
-.hidden {
-    display: none;
+/* Error Message Display */
+.error-message {
+    display: none; /* Hide by default */
+    background-color: #f8d7da;
+    border-left: 4px solid #dc3545;
+    color: #721c24;
+    padding: 16px;
+    margin-bottom: 20px;
+    border-radius: 6px;
+    align-items: center;
+}
+
+.error-message.show {
+    display: flex;
+}
+
+.error-message-icon {
+    font-size: 24px;
+    margin-right: 12px;
+}
+
+.error-message-content {
+    flex: 1;
+}
+
+.error-message-dismiss {
+    color: #721c24;
+    cursor: pointer;
+    font-size: 20px;
+}
+
+/* Loading State & Spinner Improvements */
+.spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid rgba(0,0,0,0.1);
+    border-radius: 50%;
+    border-top-color: #1DB954;
+    animation: spin 1s ease-in-out infinite;
+    margin: 0 10px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Accessibility Improvements for Focus States */
+.issue-row:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5);
+    position: relative;
+    z-index: 1;
 }
 
 /* Cache Management Styles */

@@ -9,6 +9,7 @@
 </head>
 <body>
     <div class="container">
+      
         <h1>Song Length Checker</h1>
         <p>Compare song lengths in your local folder with Spotify data</p>
         
@@ -102,58 +103,87 @@
             </div>
         </div>
 
-        <div class="results-section">
-            <h2>Results</h2>
-            <div id="results-container">
-                <div id="results-summary"></div>
-                <div class="results-controls">
-                    <div class="issues-filter">
-                        <span class="filter-label">Filter results:</span>
-                        <div class="filter-options">
-                            <label class="filter-option">
-                                <input type="checkbox" id="show-all-issues" />
-                                <span>All Issues</span>
-                            </label>
-                            <label class="filter-option">
-                                <input type="checkbox" id="show-warnings" />
-                                <span>Warnings</span>
-                            </label>
-                            <label class="filter-option">
-                                <input type="checkbox" id="show-errors" />
-                                <span>Errors</span>
-                            </label>
-                            <label class="filter-option">
-                                <input type="checkbox" id="show-not-found" />
-                                <span>Not Found</span>
-                            </label>
+        <!-- Add Results section container -->
+        <div class="results-section hidden">
+            <h2>Comparison Results</h2>
+            
+            <!-- Results filtering controls -->
+            <div class="results-controls">
+                <div class="issues-filter">
+                    <div class="filter-label">Filter Issues:</div>
+                    <div class="filter-options">
+                        <div class="filter-option all-issues">
+                            <input type="checkbox" id="show-all-issues">
+                            <label for="show-all-issues">All Issues</label>
+                        </div>
+                        <div class="filter-option warnings">
+                            <input type="checkbox" id="show-warnings">
+                            <label for="show-warnings">Warnings</label>
+                        </div>
+                        <div class="filter-option errors">
+                            <input type="checkbox" id="show-errors">
+                            <label for="show-errors">Errors</label>
+                        </div>
+                        <div class="filter-option not-found">
+                            <input type="checkbox" id="show-not-found">
+                            <label for="show-not-found">Not Found</label>
                         </div>
                     </div>
                 </div>
-                <table id="results-table" class="hidden">
-                    <thead>
-                        <tr>
-                            <th>Song</th>
-                            <th>Local Length</th>
-                            <th>Spotify Length</th>
-                            <th>Difference</th>
-                            <th>Status</th>
-                        </tr>
-                    </thead>
-                    <tbody id="results-body"></tbody>
-                </table>
             </div>
+            
+            <!-- Results summary -->
+            <div id="results-summary"></div>
+            
+            <!-- Loading indicator -->
+            <div id="loading" class="hidden">
+                <div class="processing-status">
+                    <span>Processing files...</span>
+                    <span id="progress-count">(0/0 files)</span>
+                </div>
+                <div class="progress-container">
+                    <div id="progress-bar" class="progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                        <div class="progress-fill"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Results table -->
+            <table id="results-table" class="hidden">
+                <thead>
+                    <tr>
+                        <th>File Name</th>
+                        <th>Local Duration</th>
+                        <th>Spotify Duration</th>
+                        <th>Difference</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="results-body"></tbody>
+            </table>
         </div>
     </div>
-
-    <!-- Load JavaScript modules in the correct order -->
+    
+    <!-- Scripts -->
     <script src="js/config.js"></script>
     <script src="js/logger.js"></script>
+    <script src="js/cache-manager.js"></script>
     <script src="js/spotify-api.js"></script>
     <script src="js/file-handler.js"></script>
-    <script src="js/ui-manager.js"></script>
     <script src="js/file-uploader.js"></script>
     <script src="js/results-manager.js"></script>
-    <script src="js/cache-manager.js"></script>
+    <script src="js/ui-manager.js"></script>
     <script src="js/app.js"></script>
+    <script>
+        // Add this script to ensure error messages are hidden on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            // Hide any error message containers that might be present in the HTML
+            const errorContainers = document.querySelectorAll('.error-message');
+            errorContainers.forEach(container => {
+                container.style.display = 'none';
+                container.setAttribute('aria-hidden', 'true');
+            });
+        });
+    </script>
 </body>
 </html>

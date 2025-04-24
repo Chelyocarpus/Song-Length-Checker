@@ -232,7 +232,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     spotifyData: bestMatch,
                     notFoundReason: notFoundReason,
                     errorDetails: status === config.statusMessages.error ? 
-                        `The track is ${differenceFormatted} ${fileData.durationMs > spotifyDuration ? 'longer' : 'shorter'} than the Spotify version.` : 
+                        `Your recording is ${differenceFormatted} (${Math.round(difference/1000)} seconds) ${fileData.durationMs > spotifyDuration ? 'longer' : 'shorter'} than the Spotify version.` : 
                         undefined
                 });
                 
