@@ -306,7 +306,6 @@ class SpotifyAPI {
         let normalizedArtist = getNormalizedString(artist);
         let normalizedAlbum = getNormalizedString(album);
         
-        // Generate cache key
         const cacheKey = this.generateSearchKey(normalizedTrack, normalizedArtist, normalizedAlbum);
         
         // Check cache first
@@ -316,170 +315,126 @@ class SpotifyAPI {
             return cachedResult.data;
         }
         
-        // If using cache only and no valid cache, return empty array
         if (useCacheOnly) {
             logger.info(`No cached data for: ${normalizedTrack} - ${normalizedArtist} ${normalizedAlbum ? `(${normalizedAlbum})` : ''} (cache-only mode)`);
             return [];
         }
 
-        // If not authenticated, can't proceed with API request
         if (!this.isAuthenticated()) {
             throw new Error('Not authenticated. Please authenticate first.');
         }
 
         try {
-            // Detect CJK characters in any of the inputs
-            const hasCJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uff66-\uff9f]/.test(
-                normalizedTrack + normalizedArtist + normalizedAlbum
-            );
-            
-            // Check for invalid characters - replace with empty string rather than skipping
-            if (normalizedAlbum.includes('�') || normalizedTrack.includes('�') || normalizedArtist.includes('�')) {
-                logger.warn(`Query contains replacement characters, sanitizing:`, {
-                    track: normalizedTrack,
-                    artist: normalizedArtist,
-                    album: normalizedAlbum
-                });
-                
-                // Sanitize strings
-                const sanitizedTrack = normalizedTrack.replace(/�/g, '');
-                const sanitizedArtist = normalizedArtist.replace(/�/g, '');
-                const sanitizedAlbum = normalizedAlbum.replace(/�/g, '');
-                
-                // Update normalized versions
-                if (normalizedTrack !== sanitizedTrack) normalizedTrack = sanitizedTrack;
-                if (normalizedArtist !== sanitizedArtist) normalizedArtist = sanitizedArtist;
-                if (normalizedAlbum !== sanitizedAlbum) normalizedAlbum = sanitizedAlbum;
-            }
-
-            // Execute search strategies one by one until we get enough results
             let allTracks = [];
-            
-            // 1. First try the most specific search with all parameters
+            let response;
+            let data;
+
+            // --- Strategy 1: Primary Search (Most Specific) ---
             let queryParts = [];
-            
-            if (normalizedTrack) {
-                queryParts.push(`track:${normalizedTrack}`);
-            }
-            
-            if (normalizedArtist) {
-                queryParts.push(`artist:${normalizedArtist}`);
-            }
-            
-            if (normalizedAlbum && !normalizedAlbum.includes('�')) {
-                const cleanedAlbum = normalizedAlbum.replace(/[.,;:!]+$/, '').trim();
-                queryParts.push(`album:${cleanedAlbum}`);
+            if (normalizedTrack) queryParts.push(`track:${normalizedTrack}`);
+            if (normalizedArtist) queryParts.push(`artist:${normalizedArtist}`);
+            // Clean album name before adding to query
+            if (normalizedAlbum) {
+                 const cleanedAlbum = normalizedAlbum.replace(/[.,;:!]+$/, '').trim();
+                 // Only add album if it's not empty after cleaning
+                 if (cleanedAlbum) {
+                    queryParts.push(`album:${cleanedAlbum}`);
+                 }
             }
             
             const primaryQuery = queryParts.join(' ');
             logger.info(`Searching Spotify with primary query: ${primaryQuery}`);
             
-            let response = await this.fetchWithRetry(
+            response = await this.fetchWithRetry(
                 `${config.apiBaseUrl}/search?q=${encodeURIComponent(primaryQuery)}&type=track&limit=5`,
-                {
-                    headers: {
-                        'Authorization': `Bearer ${this.accessToken}`
-                    }
-                }
+                { headers: { 'Authorization': `Bearer ${this.accessToken}` } }
             );
 
             if (response.ok) {
-                const data = await response.json();
-                allTracks = [...data.tracks.items];
+                data = await response.json();
+                allTracks = data.tracks.items || [];
+                logger.debug(`Primary search returned ${allTracks.length} tracks.`);
+            } else {
+                 logger.warn(`Primary search failed: ${response.status} ${response.statusText}`);
+                 // Continue to next strategy even if the request failed, but log it
             }
+
+            // --- Return early if primary search successful ---
+            if (allTracks.length > 0) {
+                logger.info(`Found ${allTracks.length} tracks with primary query. Returning early.`);
+                this.cache.searches[cacheKey] = { data: allTracks, timestamp: Date.now() };
+                this.saveCacheToStorage();
+                return allTracks;
+            }
+
+            // --- Strategy 2: Simplified Search for CJK ---
+            const hasCJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uff66-\uff9f]/.test(
+                normalizedTrack + normalizedArtist + normalizedAlbum
+            );
             
-            // 2. If we have CJK content and few results, try simplified query
-            if (hasCJK && allTracks.length < 2) {
+            if (hasCJK) {
                 const simplifiedQuery = [normalizedTrack, normalizedArtist, normalizedAlbum]
-                    .filter(part => part && !part.includes('�'))
+                    .filter(part => part) // Filter out empty parts
                     .join(' ');
                 
-                logger.debug(`Limited results with CJK characters. Trying simplified search: ${simplifiedQuery}`);
+                logger.debug(`Primary search failed or yielded no results. Trying simplified CJK search: ${simplifiedQuery}`);
                 
                 response = await this.fetchWithRetry(
                     `${config.apiBaseUrl}/search?q=${encodeURIComponent(simplifiedQuery)}&type=track&limit=10`,
-                    {
-                        headers: {
-                            'Authorization': `Bearer ${this.accessToken}`
-                        }
-                    }
+                    { headers: { 'Authorization': `Bearer ${this.accessToken}` } }
                 );
                 
                 if (response.ok) {
-                    const simplifiedData = await response.json();
-                    // Add non-duplicate tracks
-                    const existingIds = new Set(allTracks.map(t => t.id));
-                    const newTracks = simplifiedData.tracks.items.filter(t => !existingIds.has(t.id));
-                    allTracks = [...allTracks, ...newTracks];
+                    data = await response.json();
+                    allTracks = data.tracks.items || [];
+                    logger.debug(`Simplified CJK search returned ${allTracks.length} tracks.`);
+                } else {
+                     logger.warn(`Simplified CJK search failed: ${response.status} ${response.statusText}`);
+                }
+
+                // Return early if simplified CJK search successful
+                if (allTracks.length > 0) {
+                    logger.info(`Found ${allTracks.length} tracks with simplified CJK query. Returning early.`);
+                    this.cache.searches[cacheKey] = { data: allTracks, timestamp: Date.now() };
+                    this.saveCacheToStorage();
+                    return allTracks;
                 }
             }
-            
-            // 3. If no results and we have a track name with numbers, try without numbers
-            if (allTracks.length === 0 && /\d/.test(normalizedTrack)) {
-                const strippedTrack = normalizedTrack.replace(/\s+\d+\s*$/, '').trim();
-                
-                if (strippedTrack !== normalizedTrack) {
-                    let strippedQueryParts = [];
-                    strippedQueryParts.push(`track:${strippedTrack}`);
-                    
-                    if (normalizedArtist) {
-                        strippedQueryParts.push(`artist:${normalizedArtist}`);
-                    }
-                    
-                    if (normalizedAlbum && !normalizedAlbum.includes('�')) {
-                        strippedQueryParts.push(`album:${normalizedAlbum}`);
-                    }
-                    
-                    const strippedQuery = strippedQueryParts.join(' ');
-                    logger.debug(`No results found. Trying without trailing numbers: ${strippedQuery}`);
-                    
-                    response = await this.fetchWithRetry(
-                        `${config.apiBaseUrl}/search?q=${encodeURIComponent(strippedQuery)}&type=track&limit=5`,
-                        {
-                            headers: {
-                                'Authorization': `Bearer ${this.accessToken}`
-                            }
-                        }
-                    );
-                    
-                    if (response.ok) {
-                        const data = await response.json();
-                        allTracks = [...allTracks, ...data.tracks.items];
-                    }
-                }
-            }
-            
-            // 4. If still no results, try a more relaxed search (title only)
-            if (allTracks.length === 0 && normalizedTrack) {
-                const relaxedQuery = `track:${normalizedTrack}`;
-                logger.debug(`No results found. Trying broader search: ${relaxedQuery}`);
-                
+
+            // --- Strategy 5: Simple Artist + Track Name Search ---
+            // Only run if all previous strategies yielded no results and we have both artist and track
+            if (allTracks.length === 0 && normalizedArtist && normalizedTrack) {
+                const simpleQuery = `${normalizedArtist} ${normalizedTrack}`;
+                logger.debug(`All previous searches failed. Trying simple combined search: ${simpleQuery}`);
+
                 response = await this.fetchWithRetry(
-                    `${config.apiBaseUrl}/search?q=${encodeURIComponent(relaxedQuery)}&type=track&limit=10`,
-                    {
-                        headers: {
-                            'Authorization': `Bearer ${this.accessToken}`
-                        }
-                    }
+                    `${config.apiBaseUrl}/search?q=${encodeURIComponent(simpleQuery)}&type=track&limit=2`,
+                    { headers: { 'Authorization': `Bearer ${this.accessToken}` } }
                 );
-                
+
                 if (response.ok) {
-                    const data = await response.json();
-                    allTracks = [...allTracks, ...data.tracks.items];
+                    data = await response.json();
+                    allTracks = data.tracks.items || [];
+                    logger.debug(`Simple combined search returned ${allTracks.length} tracks.`);
+                } else {
+                     logger.warn(`Simple combined search failed: ${response.status} ${response.statusText}`);
                 }
             }
             
-            // Save to cache
+            // --- Final Caching and Return ---
+            logger.info(`Search process completed. Final track count: ${allTracks.length}`);
             this.cache.searches[cacheKey] = {
-                data: allTracks,
+                data: allTracks, // Cache the final result, even if empty
                 timestamp: Date.now()
             };
             this.saveCacheToStorage();
             
             return allTracks;
         } catch (error) {
-            logger.error('Search error:', error);
-            return [];
+            // Log the error and return empty array to prevent breaking the flow
+            logger.error('Unexpected error during searchTrack:', error);
+            // Cache the error state? Maybe not, allow retry later.
+            return []; 
         }
     }
 
@@ -877,9 +832,7 @@ class SpotifyAPI {
                             if (rawSpotifyAlbum === rawAlbumName) {
                                 albumBonus = 1.0; // Perfect raw match gets full score
                                 logger.debug(`Raw exact CJK album match: "${rawAlbumName}" = "${rawSpotifyAlbum}" +1.0`);
-                            }
-                            // ...rest of the existing code for character comparison...
-                            else {
+                            } else {
                                 const albumCharCode = rawAlbumName.charCodeAt(0);
                                 const spotifyChars = [...rawSpotifyAlbum];
                                 
