@@ -1,5 +1,4 @@
-![grafik](https://github.com/user-attachments/assets/998bb8c3-90c8-4b1f-bdb5-477731f143e0)
-
+![grafik](https://github.com/user-attachments/assets/4cfa47d1-5f24-4cf8-89e4-69f814851fb1)
 
 # Song Length Checker
 
